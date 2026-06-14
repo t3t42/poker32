@@ -1,0 +1,317 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Hold'em — table</title>
+  <link rel="stylesheet" href="../src/render/tokens.css">
+  <link rel="stylesheet" href="../src/render/cards.css">
+  <link rel="stylesheet" href="../src/render/table.css">
+  <style>
+    body { margin: 0; min-height: 100vh; display: grid; place-items: start center; gap: 14px; padding: 22px 12px;
+      font-family: Georgia, 'Times New Roman', serif; color: var(--paper);
+      background: radial-gradient(140% 120% at 50% 0%, #123 0%, #050a08 70%); }
+    h1 { color: var(--gold); margin: 0; font-size: 22px; letter-spacing: .06em; text-shadow: 0 0 18px var(--gold-glow); }
+    .wrap { display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap; justify-content: center; }
+    #stagebox { overflow: hidden; }
+    #stage { position: relative; width: 900px; height: 560px; transform-origin: top left; }
+    #fx { position: absolute; inset: 0; pointer-events: none; }
+    .pcard { position: absolute; width: 60px; height: 84px; transform-style: preserve-3d; will-change: transform, opacity; }
+    .pcard .lay { position: absolute; inset: 0; backface-visibility: hidden; -webkit-backface-visibility: hidden; line-height: 0; filter: drop-shadow(0 3px 6px rgba(0, 0, 0, .5)); }
+    .pcard .back { transform: rotateY(0deg); } .pcard .face { transform: rotateY(180deg); }
+    .betchip { position: absolute; line-height: 0; will-change: transform; }
+    #actionbar { display: flex; gap: 8px; align-items: center; min-height: 44px; flex-wrap: wrap; justify-content: center; }
+    #actionbar button { font: inherit; font-size: 14px; color: var(--paper); background: rgba(212, 175, 55, .16); border: 1px solid rgba(212, 175, 55, .55); padding: 9px 16px; border-radius: 999px; cursor: pointer; }
+    #actionbar button:disabled { opacity: .35; cursor: default; }
+    #actionbar input[type=range] { width: 200px; accent-color: var(--gold); }
+    #raiseval { min-width: 64px; color: var(--gold); }
+    .topbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; justify-content: center; }
+    .topbar button, .topbar label { font: inherit; font-size: 13px; color: var(--paper); }
+    .topbar button { background: rgba(255, 255, 255, .08); border: 1px solid #ffffff33; padding: 6px 12px; border-radius: 8px; cursor: pointer; }
+    .topbar label { display: flex; gap: 6px; align-items: center; opacity: .85; }
+    /* dev panel */
+    #dev { width: 250px; max-height: 560px; overflow: auto; display: none; }
+    .devpanel { background: rgba(8, 18, 14, .82); border: 1px solid rgba(212, 175, 55, .35); border-radius: 12px; padding: 10px 12px; backdrop-filter: blur(6px); }
+    .dev-title { color: var(--gold); font-size: 13px; letter-spacing: .08em; margin-bottom: 8px; }
+    .dev-seat { border-top: 1px solid #ffffff14; padding: 7px 0; font-size: 12px; }
+    .dev-name { font-weight: bold; color: var(--paper); margin-bottom: 3px; display: flex; justify-content: space-between; }
+    .dev-chosen { color: var(--gold); font-style: italic; }
+    .dev-row { display: flex; justify-content: space-between; opacity: .85; }
+    .dev-row b { color: #cfe; font-weight: normal; }
+    .dev-range { font-family: monospace; font-size: 11px; }
+    .dev-empty { opacity: .5; font-style: italic; }
+    /* settings modal */
+    #modal { position: fixed; inset: 0; background: rgba(0, 0, 0, .6); display: none; place-items: center; z-index: 20; padding: 16px; }
+    #modal.open { display: grid; }
+    .sheet { background: #0c1d16; border: 1px solid rgba(212, 175, 55, .45); border-radius: 16px; padding: 20px; max-width: 560px; width: 100%; max-height: 88vh; overflow: auto; box-shadow: 0 24px 60px #000a; }
+    .sheet h2 { color: var(--gold); margin: 0 0 12px; font-size: 18px; }
+    .row { display: flex; gap: 10px; align-items: center; margin: 8px 0; flex-wrap: wrap; }
+    .row label { min-width: 120px; opacity: .85; font-size: 14px; }
+    .sheet select, .sheet input { font: inherit; font-size: 14px; background: #06120d; color: var(--paper); border: 1px solid #ffffff33; border-radius: 8px; padding: 6px 8px; }
+    .seatcfg { border: 1px solid #ffffff1a; border-radius: 10px; padding: 8px 10px; margin: 6px 0; }
+    .seatcfg .hd { color: var(--gold); font-size: 13px; margin-bottom: 4px; }
+    .sheet .actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 14px; }
+    .sheet .actions button { font: inherit; font-size: 14px; padding: 9px 18px; border-radius: 999px; cursor: pointer; }
+    .btn-go { background: var(--gold); color: #1a1205; border: none; }
+    .btn-cancel { background: transparent; color: var(--paper); border: 1px solid #ffffff44; }
+    .hint { opacity: .55; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <h1>Hold'em</h1>
+  <div class="topbar">
+    <button id="deal">Deal next hand</button>
+    <button id="open-settings">\u2699 Settings</button>
+    <label><input type="checkbox" id="devmode"> Developer mode</label>
+    <label><input type="checkbox" id="reduce"> Reduce motion</label>
+    <label><input type="checkbox" id="mute"> Mute</label>
+  </div>
+  <div class="wrap">
+    <div id="stagebox"><div id="stage"><canvas id="fx" width="900" height="560"></canvas></div></div>
+    <div id="dev"></div>
+  </div>
+  <div id="actionbar"></div>
+
+  <div id="modal"><div class="sheet">
+    <h2>Game settings</h2>
+    <div class="row"><label>Players</label><select id="set-seats"><option>2</option><option>3</option><option selected>4</option><option>5</option><option>6</option></select></div>
+    <div class="row"><label>Starting stack</label><input id="set-stack" type="number" value="10000" min="100" step="100"></div>
+    <div class="row"><label>Blinds (SB / BB)</label><input id="set-sb" type="number" value="50" min="1" style="width:90px"> / <input id="set-bb" type="number" value="100" min="2" style="width:90px"></div>
+    <div class="row"><label>Raise blinds every</label><input id="set-binc" type="number" value="0" min="0" style="width:90px"> hands <span class="hint">(0 = off)</span></div>
+    <div class="row"><label>Options</label><label><input type="checkbox" id="set-sound"> Sound</label><label><input type="checkbox" id="set-reduce"> Reduce motion</label></div>
+    <div id="seatcfgs"></div>
+    <p class="hint">API keys are kept in memory for this session only and are never saved.</p>
+    <div class="actions"><button class="btn-cancel" id="set-cancel">Cancel</button><button class="btn-go" id="set-go">Start new game</button></div>
+  </div></div>
+
+  <script type="module">
+    import { HoldemEngine } from '../src/engine/index.js';
+    import { CognitiveAI, equityVsRandom } from '../src/ai/index.js';
+    import { LLMDecider, GeminiClient } from '../src/ai/index.js';
+    import { tableSVG, chipSVG, cardFaceSVG, cardBackSVG, hudHTML, potOddsPct, handRankHint } from '../src/render/index.js';
+    import { Presenter, Timeline, play, domApply, transformString, spawnBurst, stepParticles, shockwave, SoundBoard } from '../src/anim/index.js';
+    import { Controller, tableGeometry, AnimMapper, viewToScene, cardId, boardId, betChipId,
+      DEFAULT_SETTINGS, ARCHETYPE_NAMES, normalizeSettings, buildSeats, formatTrace, devPanelHTML } from '../src/app/index.js';
+
+    const W = 900, H = 560, HERO = 0;
+    const stage = document.getElementById('stage');
+    const presenter = new Presenter();
+
+    // module-level state, rebuilt by init()
+    let engine, geo, seatsMeta, mapper, controller, board, NAMES = [], seatCount = 4, currentSettings = normalizeSettings(DEFAULT_SETTINGS);
+    let els = {}, plates = {}, potEl, hudEl, traces = {};
+
+    // ---- effects canvas loop (persistent) ----
+    const fx = document.getElementById('fx'), g = fx.getContext('2d'); let parts = [], rings = [], last = 0;
+    (function fxLoop(ts) {
+      const dt = Math.min((ts - last) / 1000 || 0, .05); last = ts; g.clearRect(0, 0, W, H);
+      parts = stepParticles(parts, dt, { gravity: 360 });
+      for (const p of parts) { g.globalAlpha = Math.max(0, p.opacity); g.fillStyle = '#f1d98a'; g.beginPath(); g.arc(p.x, p.y, p.size, 0, 7); g.fill(); }
+      g.globalAlpha = 1;
+      rings = rings.filter(r => { const s = shockwave(ts - r.t0, { duration: 700, maxR: 300 }); if (s.done) return false; g.strokeStyle = 'rgba(224,69,79,' + s.opacity.toFixed(3) + ')'; g.lineWidth = 4; g.beginPath(); g.arc(r.x, r.y, s.radius, 0, 7); g.stroke(); return true; });
+      requestAnimationFrame(fxLoop);
+    })();
+
+    const setFace = (id, card) => { const el = els[id]; if (el && card) el.querySelector('.face').innerHTML = cardFaceSVG(card, { width: 60 }); };
+    const playSteps = steps => steps.length ? new Promise(res => play(new Timeline(steps, { reducedMotion: presenter.reducedMotion }), domApply(id => els[id]), { onDone: res })) : Promise.resolve();
+
+    // ---- build the persistent table DOM for n seats ----
+    function buildScene(n) {
+      stage.querySelectorAll('.dyn').forEach(node => node.remove());
+      els = {}; plates = {};
+      if (!stage.querySelector('#tablebg')) stage.insertAdjacentHTML('afterbegin', '<div id="tablebg">' + tableSVG({ width: W, height: H }) + '</div>');
+      const mk = (cls, id) => { const d = document.createElement('div'); d.className = cls + ' dyn'; d.id = id; stage.appendChild(d); return d; };
+      for (let s = 0; s < n; s++) {
+        const p = geo.seatPos(s);
+        const plate = mk('abs', 'plate' + s); plate.style.left = p.x + 'px'; plate.style.top = p.y + 'px'; plates[s] = plate;
+        for (let i = 0; i < 2; i++) { const c = mk('pcard', cardId(s, i)); c.innerHTML = '<div class="lay back">' + cardBackSVG({ width: 60 }) + '</div><div class="lay face"></div>'; c.style.opacity = 0; c.style.transform = transformString(geo.deck()); els[cardId(s, i)] = c; }
+        const bc = mk('betchip', betChipId(s)); bc.innerHTML = chipSVG(100, { size: 30 }); bc.style.opacity = 0; bc.style.transform = transformString(geo.seatPos(s)); els[betChipId(s)] = bc;
+      }
+      for (let i = 0; i < 5; i++) { const c = mk('pcard', boardId(i)); c.innerHTML = '<div class="lay back">' + cardBackSVG({ width: 60 }) + '</div><div class="lay face"></div>'; c.style.opacity = 0; c.style.transform = transformString(geo.deck()); els[boardId(i)] = c; }
+      potEl = mk('abs', 'pot'); potEl.style.left = geo.pot().x + 'px'; potEl.style.top = (geo.pot().y + 30) + 'px';
+      hudEl = mk('hud-mount', 'hud'); hudEl.innerHTML = hudHTML({});
+    }
+
+    function onScene(scene) {
+      for (const s of scene.seats) {
+        const pl = plates[s.seat]; if (!pl) continue;
+        pl.innerHTML = '<div class="seat-plate ' + (s.seat === HERO ? 'hero ' : '') + (s.isActive ? 'active ' : '') + (s.folded ? 'folded ' : '') + (s.allIn ? 'allin' : '') + '"><div class="seat-name">' + s.name + '</div><div class="seat-stack">' + s.stack.toLocaleString() + '</div></div>';
+      }
+      potEl.innerHTML = '<div class="pot-label">Pot ' + scene.pot.toLocaleString() + '</div>';
+    }
+
+    async function playAnimations(anim) {
+      const view = engine.getView(HERO);
+      view.you.holeCards.forEach((c, i) => setFace(cardId(HERO, i), c));
+      view.board.forEach((c, i) => setFace(boardId(i), c));
+      const motion = anim.filter(a => ['DEAL', 'FLIP', 'BET', 'COLLECT', 'FLOP', 'TURN', 'RIVER'].includes(a.type));
+      const cues = anim.filter(a => ['WIN', 'ALL_IN', 'SHOWDOWN'].includes(a.type));
+      for (const a of motion) if (a.type === 'BET' && els[a.id]) els[a.id].style.opacity = 1;
+      if (motion.some(a => a.type === 'DEAL')) board.play('deal');
+      if (motion.some(a => a.type === 'BET')) board.play('chip');
+      let steps = presenter.presentAll(motion);
+      if (motion.some(a => a.type === 'DEAL' && (a.id === cardId(HERO, 0) || a.id === cardId(HERO, 1)))) {
+        steps = steps.concat(presenter.presentAll([{ type: 'FLIP', id: cardId(HERO, 0) }, { type: 'FLIP', id: cardId(HERO, 1) }]).map(s => ({ ...s, delay: (s.delay || 0) + 540 })));
+      }
+      for (const cue of cues) if (cue.type === 'SHOWDOWN' && Array.isArray(cue.reveals)) {
+        for (const r of cue.reveals) { const hole = r.holeCards || r.hole || r.cards || []; hole.forEach((c, i) => setFace(cardId(r.seat, i), c)); }
+        steps = steps.concat(presenter.presentAll(cue.reveals.flatMap(r => [0, 1].map(i => ({ type: 'FLIP', id: cardId(r.seat, i) })))));
+      }
+      await playSteps(steps);
+      for (const cue of cues) { if (cue.type === 'WIN') { parts = parts.concat(spawnBurst(cue.at.x, cue.at.y, { count: 90, speed: [120, 320], life: [.7, 1.3] })); board.play('win'); } if (cue.type === 'ALL_IN') rings.push({ x: cue.at.x, y: cue.at.y, t0: performance.now() }); }
+    }
+
+    // ---- developer mode panel ----
+    const devEl = document.getElementById('dev');
+    let devOn = false;
+    function refreshDev() {
+      if (!devOn) return;
+      const rows = seatsMeta.map((m, i) => (m.human ? null : (traces[i] || { name: NAMES[i], source: m.engine === 'gemini' ? 'gemini' : 'builtin', trace: null }))).filter(Boolean);
+      devEl.innerHTML = devPanelHTML(rows);
+    }
+    function recordDecision(actor, action, decider) {
+      const m = seatsMeta[actor];
+      let source = 'builtin', trace = null;
+      if (m.engine === 'gemini') { source = action && action.source === 'fallback' ? 'fallback' : 'gemini'; trace = action && action.source === 'fallback' && decider.fallback ? decider.fallback.lastTrace : null; }
+      else { trace = decider.lastTrace; }
+      traces[actor] = { name: NAMES[actor], source, trace };
+      refreshDev();
+    }
+    document.getElementById('devmode').onchange = e => { devOn = e.target.checked; devEl.style.display = devOn ? 'block' : 'none'; refreshDev(); };
+
+    // ---- human action bar ----
+    const bar = document.getElementById('actionbar');
+    function askHuman(view) {
+      const L = view.legal;
+      const live = view.players.filter(p => p.seat !== HERO && !p.folded && !p.out).length;
+      const eq = view.board.length ? equityVsRandom(view.you.holeCards, view.board, Math.max(1, live), { samples: 300 }).equity : null;
+      hudEl.innerHTML = hudHTML({ potOdds: potOddsPct(L.toCall, view.potTotal), equity: eq == null ? '\u2014' : Math.round(eq * 100) + '%', hint: handRankHint(view.you.holeCards, view.board) });
+      return new Promise(resolve => {
+        const done = a => { bar.innerHTML = ''; resolve(a); };
+        bar.innerHTML = '';
+        const btn = (label, on, dis) => { const b = document.createElement('button'); b.textContent = label; b.disabled = !!dis; b.onclick = on; bar.appendChild(b); return b; };
+        btn('Fold', () => done({ type: 'fold' }), !L.canFold || L.toCall === 0);
+        if (L.canCheck) btn('Check', () => done({ type: 'check' }));
+        else btn('Call ' + L.callAmount.toLocaleString(), () => done({ type: 'call' }), !L.canCall);
+        if (L.canRaise) {
+          const range = document.createElement('input'); range.type = 'range'; range.min = L.minRaiseTo; range.max = L.maxRaiseTo; range.value = Math.min(L.maxRaiseTo, L.minRaiseTo);
+          const val = document.createElement('span'); val.id = 'raiseval'; val.textContent = (+range.value).toLocaleString();
+          range.oninput = () => val.textContent = (+range.value).toLocaleString();
+          btn(L.toCall ? 'Raise to' : 'Bet', () => done({ type: 'raise', amount: +range.value }));
+          bar.appendChild(range); bar.appendChild(val);
+        }
+      });
+    }
+
+    // ---- (re)build the whole game from settings ----
+    const makeBuiltin = (seat, s) => CognitiveAI.fromArchetype(seat.archetype, s.startingStack, { samples: 400, devMode: true });
+    const makeGemini = (seat, s) => LLMDecider.fromArchetype(seat.archetype, s.startingStack, { client: new GeminiClient(), apiKey: seat.apiKey, minIntervalMs: 1500, fallbackOpts: { samples: 400, devMode: true } });
+
+    function init(settings) {
+      currentSettings = normalizeSettings(settings);
+      seatCount = currentSettings.seatCount;
+      NAMES = currentSettings.seats.map(s => s.name);
+      engine = new HoldemEngine({
+        seats: currentSettings.seats.map((s, i) => ({ id: s.name || ('Seat ' + i), stack: currentSettings.startingStack })),
+        smallBlind: currentSettings.smallBlind, bigBlind: currentSettings.bigBlind, button: 0,
+        blindIncreaseEveryHands: currentSettings.blindIncreaseEveryHands, blindMultiplier: currentSettings.blindMultiplier,
+      });
+      geo = tableGeometry({ width: W, height: H, seatCount, heroSeat: HERO });
+      seatsMeta = buildSeats(currentSettings, { makeBuiltin, makeGemini });
+      mapper = new AnimMapper({ seatCount });
+      controller = new Controller({ engine, seats: seatsMeta, geometry: geo, mapper, heroSeat: HERO, names: NAMES, onScene, playAnimations, askHuman, onDecision: recordDecision });
+      board = new SoundBoard({ muted: !currentSettings.sound });
+      presenter.setReducedMotion(currentSettings.reducedMotion);
+      document.getElementById('mute').checked = !currentSettings.sound;
+      document.getElementById('reduce').checked = currentSettings.reducedMotion;
+      traces = {};
+      buildScene(seatCount);
+      onScene(viewToScene(engine.getView(HERO), { heroSeat: HERO, names: NAMES }));
+      refreshDev();
+      dealBtn.disabled = false;
+    }
+
+    // ---- deal loop ----
+    const dealBtn = document.getElementById('deal');
+    async function nextHand() {
+      for (let s = 0; s < seatCount; s++) for (let i = 0; i < 2; i++) { const c = els[cardId(s, i)]; c.style.opacity = 0; c.style.transform = transformString(geo.deck()); c.querySelector('.face').innerHTML = ''; }
+      for (let i = 0; i < 5; i++) { const c = els[boardId(i)]; c.style.opacity = 0; c.style.transform = transformString(geo.deck()); c.querySelector('.face').innerHTML = ''; }
+      for (let s = 0; s < seatCount; s++) els[betChipId(s)].style.opacity = 0;
+      dealBtn.disabled = true;
+      await controller.playHand();
+      dealBtn.disabled = engine.seats.filter(p => p.stack > 0).length < 2;
+    }
+    dealBtn.onclick = nextHand;
+    document.getElementById('reduce').onchange = e => presenter.setReducedMotion(e.target.checked);
+    document.getElementById('mute').onchange = e => board.setMuted(e.target.checked);
+
+    // ---- settings modal ----
+    const modal = document.getElementById('modal'), seatCfgs = document.getElementById('seatcfgs');
+    function renderSeatCfgs(n) {
+      seatCfgs.innerHTML = '';
+      for (let i = 1; i < n; i++) {
+        const cfg = currentSettings.seats[i] || {};
+        const div = document.createElement('div'); div.className = 'seatcfg'; div.dataset.seat = i;
+        div.innerHTML = '<div class="hd">Seat ' + i + '</div>'
+          + '<div class="row"><label>Name</label><input class="s-name" value="' + (cfg.name || ARCHETYPE_NAMES[(i - 1) % ARCHETYPE_NAMES.length]) + '"></div>'
+          + '<div class="row"><label>Style</label><select class="s-arch">' + ARCHETYPE_NAMES.map(a => '<option ' + (cfg.archetype === a ? 'selected' : '') + '>' + a + '</option>').join('') + '</select></div>'
+          + '<div class="row"><label>Brain</label><select class="s-engine"><option value="builtin">Built-in (cognitive)</option><option value="gemini" ' + (cfg.engine === 'gemini' ? 'selected' : '') + '>Gemini + fallback</option></select></div>'
+          + '<div class="row s-keyrow" style="display:none"><label>API key</label><input class="s-key" type="password" placeholder="memory only" value="' + (cfg.apiKey || '') + '"></div>';
+        seatCfgs.appendChild(div);
+        const eng = div.querySelector('.s-engine'), keyrow = div.querySelector('.s-keyrow');
+        const sync = () => keyrow.style.display = eng.value === 'gemini' ? 'flex' : 'none';
+        eng.onchange = sync; sync();
+      }
+    }
+    function openSettings() {
+      document.getElementById('set-seats').value = String(currentSettings.seatCount);
+      document.getElementById('set-stack').value = currentSettings.startingStack;
+      document.getElementById('set-sb').value = currentSettings.smallBlind;
+      document.getElementById('set-bb').value = currentSettings.bigBlind;
+      document.getElementById('set-binc').value = currentSettings.blindIncreaseEveryHands;
+      document.getElementById('set-sound').checked = currentSettings.sound;
+      document.getElementById('set-reduce').checked = currentSettings.reducedMotion;
+      renderSeatCfgs(currentSettings.seatCount);
+      modal.classList.add('open');
+    }
+    document.getElementById('open-settings').onclick = openSettings;
+    document.getElementById('set-cancel').onclick = () => modal.classList.remove('open');
+    document.getElementById('set-seats').onchange = e => renderSeatCfgs(+e.target.value);
+    document.getElementById('set-go').onclick = () => {
+      const seats = [{ human: true, name: 'You' }];
+      seatCfgs.querySelectorAll('.seatcfg').forEach(div => seats.push({
+        name: div.querySelector('.s-name').value.trim() || 'Bot',
+        archetype: div.querySelector('.s-arch').value,
+        engine: div.querySelector('.s-engine').value,
+        apiKey: div.querySelector('.s-key') ? div.querySelector('.s-key').value : '',
+      }));
+      const settings = {
+        seatCount: +document.getElementById('set-seats').value,
+        startingStack: +document.getElementById('set-stack').value,
+        smallBlind: +document.getElementById('set-sb').value,
+        bigBlind: +document.getElementById('set-bb').value,
+        blindIncreaseEveryHands: +document.getElementById('set-binc').value,
+        sound: document.getElementById('set-sound').checked,
+        reducedMotion: document.getElementById('set-reduce').checked,
+        seats,
+      };
+      modal.classList.remove('open');
+      init(settings);
+    };
+
+    // ---- boot ----
+    // Scale the fixed 900×560 board down to fit narrow (phone) viewports. This is
+    // purely visual — all seat/card/chip coordinates stay in the 900×560 space.
+    const stageBox = document.getElementById('stagebox');
+    function fitStage() {
+      const s = Math.min(1, (window.innerWidth - 24) / 900);
+      stage.style.transform = 'scale(' + s + ')';
+      stageBox.style.width = (900 * s) + 'px';
+      stageBox.style.height = (560 * s) + 'px';
+    }
+    addEventListener('resize', fitStage);
+    fitStage();
+    init(DEFAULT_SETTINGS);
+  </script>
+</body>
+</html>

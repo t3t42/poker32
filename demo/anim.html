@@ -1,0 +1,541 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Animation — preview</title>
+<style>
+  body{ margin:0; min-height:100vh; display:flex; flex-direction:column; align-items:center; gap:16px; padding:32px 16px;
+        font-family:Georgia,'Times New Roman',serif; color:#f6f1e7;
+        background:radial-gradient(140% 120% at 50% 0%, #123 0%, #050a08 70%); }
+  h1{ color:#d4af37; letter-spacing:.06em; margin:0; font-size:24px; text-shadow:0 0 18px rgba(212,175,55,.5); }
+  .controls{ display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+  button{ font:inherit; font-size:13px; color:#f6f1e7; background:rgba(212,175,55,.14); border:1px solid rgba(212,175,55,.5);
+          padding:7px 14px; border-radius:999px; cursor:pointer; }
+  button:hover{ background:rgba(212,175,55,.26); }
+  label{ font-size:13px; opacity:.85; display:flex; gap:6px; align-items:center; margin-left:8px; }
+  #stage{ position:relative; width:720px; height:430px; border-radius:50%/46%;
+          background:radial-gradient(60% 60% at 50% 44%, #14543f, #0b3d2e 78%, #07271d);
+          box-shadow: inset 0 0 0 16px #3a2620, inset 0 0 0 18px #241712, 0 24px 60px #000a; }
+  .card{ position:absolute; width:60px; height:84px; transform-style:preserve-3d; will-change:transform,opacity; }
+  .card .layer{ position:absolute; inset:0; backface-visibility:hidden; -webkit-backface-visibility:hidden; line-height:0;
+                filter:drop-shadow(0 3px 6px rgba(0,0,0,.5)); }
+  .card .back{ transform:rotateY(0deg); } .card .face{ transform:rotateY(180deg); }
+  .chip{ position:absolute; line-height:0; will-change:transform; }
+  @media (prefers-reduced-motion: reduce){ .card,.chip{ will-change:auto; } }
+</style></head>
+<body>
+  <h1>Animation &mdash; deal, flip, bet, collect</h1>
+  <div class="controls">
+    <button id="deal">Deal hole</button>
+    <button id="board">Flop / Turn / River</button>
+    <button id="flip">Flip your hand</button>
+    <button id="bet">Bet</button>
+    <button id="collect">Collect pot</button>
+    <button id="reset">Reset</button>
+    <label><input type="checkbox" id="reduced"> Reduce motion</label>
+  </div>
+  <div id="stage"></div>
+  <script>
+
+// tokens.js — the SINGLE source of design tokens (spec 3.1) for code that needs
+// the values programmatically (Canvas/SVG). tokens.css mirrors the environment
+// tokens for DOM/CSS. Chip face colours live ONLY here (they are drawn as SVG),
+// so there is exactly one definition per value — no scattered hardcoded colours.
+const PALETTE = {
+  felt900: '#0b3d2e', felt700: '#14543f',        // felt
+  railLeather: '#3a2620', wood: '#5c3a21',        // rail / trim
+  gold: '#d4af37', goldGlow: 'rgba(212,175,55,.55)',
+  ink: '#101418', paper: '#f6f1e7',               // cards
+  danger: '#e0454f', info: '#39c2d7',
+};
+const EASES = {
+  deal: 'cubic-bezier(.18,.9,.32,1.08)',
+  collect: 'cubic-bezier(.5,-.28,.74,.05)',       // easeInBack
+  pop: 'cubic-bezier(.34,1.56,.64,1)',            // overshoot
+};
+
+// Chip denominations (spec 3.2). Per value: disc `face`, `edge` spot colour,
+// denomination `ring` colour, central `mono` text colour on a `monoDisc`.
+const CHIP_DENOMINATIONS = [
+  { value: 1000, name: 'gold',   label: '1K',  face: '#c8a13a', edge: '#3a2c10', ring: '#f1d98a', mono: '#2a2008', monoDisc: '#f1d98a' },
+  { value: 500,  name: 'purple', label: '500', face: '#5b2a86', edge: '#ead9ff', ring: '#d4af37', mono: '#f6f1e7', monoDisc: '#d4af37' },
+  { value: 100,  name: 'black',  label: '100', face: '#15181c', edge: '#d4af37', ring: '#d4af37', mono: '#f6f1e7', monoDisc: '#1f2429' },
+  { value: 25,   name: 'green',  label: '25',  face: '#1e7a46', edge: '#f6f1e7', ring: '#d4af37', mono: '#f6f1e7', monoDisc: '#155f37' },
+  { value: 5,    name: 'red',    label: '5',   face: '#c0392b', edge: '#f6f1e7', ring: '#d4af37', mono: '#f6f1e7', monoDisc: '#9c2b20' },
+  { value: 1,    name: 'white',  label: '1',   face: '#f1ece1', edge: '#2a3550', ring: '#b08d2a', mono: '#1b2030', monoDisc: '#e7dcc2' },
+];
+const CHIP_BY_VALUE = Object.fromEntries(CHIP_DENOMINATIONS.map(d => [d.value, d]));
+
+// easing.js — cubic-bezier easing (spec 3.1 tokens, used per-motion in 3.4).
+// Returns p∈[0,1] → eased value; overshoot curves (pop, deal) intentionally
+// exceed 1 mid-flight and resolve to exactly 1 at p=1.
+function cubicBezier(x1, y1, x2, y2) {
+  const cx = 3 * x1, bx = 3 * (x2 - x1) - cx, ax = 1 - cx - bx;
+  const cy = 3 * y1, by = 3 * (y2 - y1) - cy, ay = 1 - cy - by;
+  const bezX = t => ((ax * t + bx) * t + cx) * t;
+  const bezY = t => ((ay * t + by) * t + cy) * t;
+  const dBezX = t => (3 * ax * t + 2 * bx) * t + cx;
+  function solveX(x) {
+    let t = x;
+    for (let i = 0; i < 8; i++) { const e = bezX(t) - x; if (Math.abs(e) < 1e-6) return t; const d = dBezX(t); if (Math.abs(d) < 1e-6) break; t -= e / d; }
+    let lo = 0, hi = 1; t = x;
+    for (let i = 0; i < 32; i++) { const e = bezX(t); if (Math.abs(e - x) < 1e-6) break; if (e < x) lo = t; else hi = t; t = (lo + hi) / 2; }
+    return t;
+  }
+  return p => (p <= 0 ? 0 : p >= 1 ? 1 : bezY(solveX(p)));
+}
+const EASINGS = {
+  linear: p => p,
+  deal: cubicBezier(0.18, 0.9, 0.32, 1.08),      // arrival overshoot/bounce
+  collect: cubicBezier(0.5, -0.28, 0.74, 0.05),  // easeInBack
+  pop: cubicBezier(0.34, 1.56, 0.64, 1),         // overshoot
+  smooth: cubicBezier(0.4, 0, 0.2, 1),           // standard ease (flips)
+};
+function easeByName(name) { return EASINGS[name] || EASINGS.linear; }
+
+// tween.js — interpolation primitives shared by the animator. Pure; GPU-only
+// outputs (transform/opacity). The parabola gives deals/bets their arc.
+const lerp = (a, b, t) => a + (b - a) * t;
+
+// Quadratic-bezier point from `from` to `to`, lifted by `liftPx` at the apex
+// (negative y = upward on screen). p=0 → from, p=1 → to, p=0.5 → apex.
+function parabolaPoint(from, to, liftPx, p) {
+  const cx = (from.x + to.x) / 2;
+  const cy = (from.y + to.y) / 2 - liftPx;
+  const u = 1 - p;
+  return {
+    x: u * u * from.x + 2 * u * p * cx + p * p * to.x,
+    y: u * u * from.y + 2 * u * p * cy + p * p * to.y,
+  };
+}
+
+// Build a CSS transform from animatable props. Only transform/opacity are ever
+// animated (spec 3.4: 60fps, no layout-triggering properties).
+function transformString({ x = 0, y = 0, rotate = 0, rotateY = 0, scale = 1 } = {}) {
+  let t = `translate(${round(x)}px, ${round(y)}px)`;
+  if (rotateY) t += ` perspective(1000px) rotateY(${round(rotateY)}deg)`;
+  if (rotate) t += ` rotate(${round(rotate)}deg)`;
+  if (scale !== 1) t += ` scale(${round(scale, 4)})`;
+  return t;
+}
+const round = (n, d = 2) => { const f = 10 ** d; return Math.round(n * f) / f; };
+
+// chip.js — the chip system (spec 3.2). Pure logic (breakdown, stack layout) is
+// framework-agnostic and Node-testable; chips are drawn as SVG strings (no DOM
+// dependency, no external image assets) so each chip can later be a transform-
+// animatable element (Phase 5). Colours come only from tokens.js.
+
+// ---------- colour helpers ----------
+const clampByte = n => Math.max(0, Math.min(255, Math.round(n)));
+function hexToRgb(hex) {
+  const h = hex.replace('#', ''); const v = h.length === 3 ? h.split('').map(c => c + c).join('') : h;
+  return [parseInt(v.slice(0, 2), 16), parseInt(v.slice(2, 4), 16), parseInt(v.slice(4, 6), 16)];
+}
+const rgbToHex = (r, g, b) => '#' + [r, g, b].map(x => clampByte(x).toString(16).padStart(2, '0')).join('');
+function darken(hex, f = 0.6) { const [r, g, b] = hexToRgb(hex); return rgbToHex(r * f, g * f, b * f); }
+function lighten(hex, f = 0.2) { const [r, g, b] = hexToRgb(hex); return rgbToHex(r + (255 - r) * f, g + (255 - g) * f, b + (255 - b) * f); }
+
+// ---------- pure logic ----------
+function chipStyle(value) {
+  const d = CHIP_BY_VALUE[value];
+  if (!d) throw new Error(`No chip denomination for value ${value}`);
+  return d;
+}
+
+// Greedy largest-first breakdown of an amount into chip denominations.
+function chipBreakdown(amount) {
+  let rem = Math.max(0, Math.floor(amount));
+  const out = [];
+  for (const d of CHIP_DENOMINATIONS) {            // already descending
+    const count = Math.floor(rem / d.value);
+    if (count > 0) { out.push({ value: d.value, count }); rem -= count * d.value; }
+  }
+  return out;
+}
+
+// Flat list of chip values (largest first) representing the amount.
+function chipsForAmount(amount) {
+  const flat = [];
+  for (const { value, count } of chipBreakdown(amount)) for (let i = 0; i < count; i++) flat.push(value);
+  return flat;
+}
+
+// Position chips in a stack: bottom-up vertical stagger, a fresh column past
+// `maxPerColumn`, and a 1–3px horizontal jitter per chip (spec 3.2). `rng` is
+// injectable for deterministic tests; cosmetic only (never game logic).
+function stackLayout(count, { maxPerColumn = 20, jitterMax = 3, rng = Math.random } = {}) {
+  const pos = [];
+  for (let i = 0; i < count; i++) {
+    const magnitude = 1 + Math.floor(rng() * jitterMax); // 1..jitterMax
+    const sign = rng() < 0.5 ? -1 : 1;
+    pos.push({ index: i, col: Math.floor(i / maxPerColumn), row: i % maxPerColumn, jitterX: magnitude * sign });
+  }
+  return pos;
+}
+
+// ---------- SVG drawing ----------
+// One chip in a 0..100 viewBox: drop shadow → side thickness → top face (sheen)
+// → 6–8 edge spots → concentric denomination ring → central gold monogram disc.
+function chipSVG(value, { size = 72, spots = 8, idPrefix } = {}) {
+  const d = chipStyle(value);
+  const pre = idPrefix || `chip${value}_${_uid++}`;
+  const rim = darken(d.face, 0.55);
+  const sheenId = `${pre}-sheen`, shadowId = `${pre}-shadow`;
+
+  let spotsSvg = '';
+  for (let i = 0; i < spots; i++) {
+    const a = i * 360 / spots;
+    spotsSvg += `<rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="${d.edge}" transform="rotate(${a} 50 50)"/>`;
+  }
+
+  const fontSize = d.label.length > 2 ? 17 : 22;
+  return `<svg class="chip chip-${d.name}" data-value="${value}" width="${size}" height="${size}" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="${value} chip">
+  <defs>
+    <radialGradient id="${sheenId}" cx="38%" cy="32%" r="78%">
+      <stop offset="0%" stop-color="${lighten(d.face, 0.30)}"/>
+      <stop offset="60%" stop-color="${d.face}"/>
+      <stop offset="100%" stop-color="${darken(d.face, 0.82)}"/>
+    </radialGradient>
+    <filter id="${shadowId}" x="-30%" y="-20%" width="160%" height="170%">
+      <feDropShadow dx="0" dy="3.2" stdDeviation="3" flood-color="#000" flood-opacity="0.45"/>
+    </filter>
+  </defs>
+  <g filter="url(#${shadowId})">
+    <circle cx="50" cy="53.5" r="46" fill="${rim}"/>
+    <circle cx="50" cy="50" r="46" fill="url(#${sheenId})"/>
+    <g class="edge-spots">${spotsSvg}</g>
+    <circle cx="50" cy="50" r="34.5" fill="none" stroke="${d.ring}" stroke-width="2"/>
+    <circle cx="50" cy="50" r="30" fill="none" stroke="${d.ring}" stroke-width="1" opacity="0.7"/>
+    <circle cx="50" cy="50" r="20.5" fill="${d.monoDisc}"/>
+    <circle cx="50" cy="50" r="20.5" fill="none" stroke="${darken(d.monoDisc, 0.78)}" stroke-width="0.8"/>
+    <text class="chip-mono" x="50" y="50.5" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif" font-weight="700" font-size="${fontSize}" fill="${d.mono}">${d.label}</text>
+  </g>
+</svg>`;
+}
+
+// Expose colour helpers for sibling renderers (table/HUD) so they, too, derive
+// shades from the canonical tokens rather than hardcoding new hex values.
+const colorUtil = { darken, lighten };
+
+// card.js — the card system (spec 3.3). Cards are drawn entirely in code (SVG):
+// faces with mirrored corner indices, precise vector suit pips in the
+// traditional arrangement, and stylised J/Q/K monograms; a guilloché back with
+// a double border and central emblem. Micro-noise overlay, 12px corners. Suit
+// colours come from the design tokens (ink / danger). No external assets.
+
+// Card geometry: spec calls 90px width with 12px corners; keep the ratio fixed.
+const CARD_W = 90, CARD_H = 126, CARD_R = 12;
+
+// Precise vector suit glyphs, authored in a 0..100 box.
+const SUIT_PATHS = {
+  h: 'M50 88 C20 64 6 45 6 29 C6 15 17 7 29 7 C39 7 46 13 50 21 C54 13 61 7 71 7 C83 7 94 15 94 29 C94 45 80 64 50 88 Z',
+  s: 'M50 8 C64 30 92 44 92 62 C92 75 82 83 72 83 C65 83 58 79 55 73 C56 81 59 89 67 93 L33 93 C41 89 44 81 45 73 C42 79 35 83 28 83 C18 83 8 75 8 62 C8 44 36 30 50 8 Z',
+  d: 'M50 5 C58 28 70 42 88 50 C70 58 58 72 50 95 C42 72 30 58 12 50 C30 42 42 28 50 5 Z',
+  c: 'M50 7 C60 7 68 15 68 25 C68 29 67 32 65 35 C70 32 75 31 79 31 C89 31 96 39 96 49 C96 59 88 66 79 66 C71 66 64 62 60 56 C61 65 64 78 70 92 L30 92 C36 78 39 65 40 56 C36 62 29 66 21 66 C12 66 4 59 4 49 C4 39 11 31 21 31 C25 31 30 32 35 35 C33 32 32 29 32 25 C32 15 40 7 50 7 Z',
+};
+const SUIT_IS_RED = { h: true, d: true, s: false, c: false };
+function suitColor(suit) { return SUIT_IS_RED[suit] ? PALETTE.danger : PALETTE.ink; }
+function rankLabel(rank) { return rank === 14 ? 'A' : rank === 13 ? 'K' : rank === 12 ? 'Q' : rank === 11 ? 'J' : String(rank); }
+const isCourt = rank => rank >= 11 && rank <= 13;
+const isAce = rank => rank === 14;
+
+// Traditional pip arrangement. Columns L/C/R, rows r1..r5 plus the inner extras
+// used by 7/8/10. `flip` rotates a pip 180° (bottom-half orientation).
+const COL = { L: 30, C: 45, R: 60 };
+const ROW = { r1: 30, r2: 45, r3: 63, r4: 81, r5: 96, cHi: 39, cLo: 87 };
+const P = (col, row, flip = false) => ({ x: COL[col], y: ROW[row], flip });
+const PIP_LAYOUT = {
+  2: [P('C', 'r1'), P('C', 'r5', true)],
+  3: [P('C', 'r1'), P('C', 'r3'), P('C', 'r5', true)],
+  4: [P('L', 'r1'), P('R', 'r1'), P('L', 'r5', true), P('R', 'r5', true)],
+  5: [P('L', 'r1'), P('R', 'r1'), P('C', 'r3'), P('L', 'r5', true), P('R', 'r5', true)],
+  6: [P('L', 'r1'), P('R', 'r1'), P('L', 'r3'), P('R', 'r3'), P('L', 'r5', true), P('R', 'r5', true)],
+  7: [P('L', 'r1'), P('R', 'r1'), P('C', 'cHi'), P('L', 'r3'), P('R', 'r3'), P('L', 'r5', true), P('R', 'r5', true)],
+  8: [P('L', 'r1'), P('R', 'r1'), P('C', 'cHi'), P('L', 'r3'), P('R', 'r3'), P('C', 'cLo', true), P('L', 'r5', true), P('R', 'r5', true)],
+  9: [P('L', 'r1'), P('R', 'r1'), P('L', 'r2'), P('R', 'r2'), P('C', 'r3'), P('L', 'r4', true), P('R', 'r4', true), P('L', 'r5', true), P('R', 'r5', true)],
+  10: [P('L', 'r1'), P('R', 'r1'), P('C', 'cHi'), P('L', 'r2'), P('R', 'r2'), P('L', 'r4', true), P('R', 'r4', true), P('C', 'cLo', true), P('L', 'r5', true), P('R', 'r5', true)],
+};
+function pipLayout(rank) { return PIP_LAYOUT[rank] ? PIP_LAYOUT[rank].map(p => ({ ...p })) : []; }
+
+// A suit glyph centred at (cx,cy) at pixel size s, optionally flipped.
+function suitGlyph(suit, cx, cy, s, { flip = false, color } = {}) {
+  const fill = color || suitColor(suit);
+  const t = `translate(${cx - s / 2} ${cy - s / 2}) scale(${s / 100})${flip ? ' rotate(180 50 50)' : ''}`;
+  return `<path class="suit suit-${suit}" d="${SUIT_PATHS[suit]}" fill="${fill}" transform="${t}"/>`;
+}
+
+// Top-left corner index (rank over a small suit), used twice — the second
+// rotated 180° about the card centre into the bottom-right corner.
+function cornerIndex(rank, suit) {
+  const c = suitColor(suit), lbl = rankLabel(rank);
+  return `<g class="corner-index">
+    <text x="11" y="20" text-anchor="middle" font-family="Georgia,'Times New Roman',serif" font-weight="700" font-size="${lbl.length > 1 ? 13 : 16}" fill="${c}">${lbl}</text>
+    ${suitGlyph(suit, 11, 31, 11)}
+  </g>`;
+}
+
+function noiseDefs(id) {
+  return `<filter id="${id}" x="0" y="0" width="100%" height="100%">
+    <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" stitchTiles="stitch" result="n"/>
+    <feColorMatrix in="n" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.6 0"/>
+  </filter>`;
+}
+
+function courtMonogram(rank, suit) {
+  const c = suitColor(suit), lbl = rankLabel(rank);
+  return `<g class="court">
+    <rect x="20" y="26" width="50" height="74" rx="6" fill="none" stroke="${PALETTE.gold}" stroke-width="1.6"/>
+    <rect x="24" y="30" width="42" height="66" rx="4" fill="none" stroke="${c}" stroke-width="1" opacity="0.55"/>
+    ${suitGlyph(suit, 45, 41, 17)}
+    <text x="45" y="66" text-anchor="middle" dominant-baseline="central" font-family="Georgia,'Times New Roman',serif" font-weight="700" font-size="40" fill="${c}">${lbl}</text>
+    ${suitGlyph(suit, 45, 90, 17, { flip: true })}
+  </g>`;
+}
+
+// Full card face for a {rank, suit}.
+function cardFaceSVG(card, { width = CARD_W, idPrefix } = {}) {
+  const { rank, suit } = card;
+  const pre = idPrefix || `cf${rank}${suit}_${_uid++}`;
+  const noiseId = `${pre}-noise`;
+  const height = Math.round(width * CARD_H / CARD_W);
+
+  let center = '';
+  if (isAce(rank)) center = suitGlyph(suit, 45, 63, 46);
+  else if (isCourt(rank)) center = courtMonogram(rank, suit);
+  else center = pipLayout(rank).map(p => suitGlyph(suit, p.x, p.y, 15, { flip: p.flip })).join('');
+
+  return `<svg class="playing-card" data-card="${rankLabel(rank)}${suit}" width="${width}" height="${height}" viewBox="0 0 ${CARD_W} ${CARD_H}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="${rankLabel(rank)} of ${suit}">
+  <defs>${noiseDefs(noiseId)}</defs>
+  <rect x="0.6" y="0.6" width="${CARD_W - 1.2}" height="${CARD_H - 1.2}" rx="${CARD_R}" fill="${PALETTE.paper}" stroke="#0000001f" stroke-width="1"/>
+  <g class="card-center">${center}</g>
+  ${cornerIndex(rank, suit)}
+  <g transform="rotate(180 ${CARD_W / 2} ${CARD_H / 2})">${cornerIndex(rank, suit)}</g>
+  <rect x="0.6" y="0.6" width="${CARD_W - 1.2}" height="${CARD_H - 1.2}" rx="${CARD_R}" fill="url(#${noiseId})" opacity="0.05"/>
+</svg>`;
+}
+
+// Card back: guilloché lattice + concentric rosette, double border, emblem.
+function cardBackSVG({ width = CARD_W, idPrefix } = {}) {
+  const pre = idPrefix || `cb_${_uid++}`;
+  const noiseId = `${pre}-noise`, gid = `${pre}-g`, rosette = `${pre}-ros`;
+  const height = Math.round(width * CARD_H / CARD_W);
+  const g = PALETTE.gold, felt = PALETTE.felt900, felt2 = PALETTE.felt700;
+
+  // guilloché: interwoven rotated ellipses forming a rosette
+  let petals = '';
+  for (let a = 0; a < 180; a += 18) petals += `<ellipse cx="45" cy="63" rx="30" ry="11" fill="none" stroke="${g}" stroke-width="0.5" opacity="0.5" transform="rotate(${a} 45 63)"/>`;
+  // diagonal lattice
+  let lattice = '';
+  for (let i = -CARD_H; i < CARD_W; i += 7) lattice += `<line x1="${i}" y1="0" x2="${i + CARD_H}" y2="${CARD_H}" stroke="${g}" stroke-width="0.4" opacity="0.16"/><line x1="${i}" y1="${CARD_H}" x2="${i + CARD_H}" y2="0" stroke="${g}" stroke-width="0.4" opacity="0.16"/>`;
+
+  return `<svg class="playing-card card-back" data-card="back" width="${width}" height="${height}" viewBox="0 0 ${CARD_W} ${CARD_H}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="card back">
+  <defs>
+    ${noiseDefs(noiseId)}
+    <clipPath id="${gid}"><rect x="6" y="6" width="${CARD_W - 12}" height="${CARD_H - 12}" rx="7"/></clipPath>
+    <radialGradient id="${rosette}" cx="50%" cy="50%" r="60%"><stop offset="0%" stop-color="${felt2}"/><stop offset="100%" stop-color="${felt}"/></radialGradient>
+  </defs>
+  <rect x="0.6" y="0.6" width="${CARD_W - 1.2}" height="${CARD_H - 1.2}" rx="${CARD_R}" fill="${felt}"/>
+  <g clip-path="url(#${gid})">
+    <rect x="6" y="6" width="${CARD_W - 12}" height="${CARD_H - 12}" fill="url(#${rosette})"/>
+    <g class="guilloche">${lattice}${petals}</g>
+  </g>
+  <rect x="4.5" y="4.5" width="${CARD_W - 9}" height="${CARD_H - 9}" rx="8" fill="none" stroke="${g}" stroke-width="1.4"/>
+  <rect x="8" y="8" width="${CARD_W - 16}" height="${CARD_H - 16}" rx="6" fill="none" stroke="${g}" stroke-width="0.7" opacity="0.7"/>
+  <g class="emblem">
+    <circle cx="45" cy="63" r="15" fill="${felt}" stroke="${g}" stroke-width="1"/>
+    <path d="M45 52 L54 63 L45 74 L36 63 Z" fill="none" stroke="${g}" stroke-width="1"/>
+    <text x="45" y="63.5" text-anchor="middle" dominant-baseline="central" font-family="Georgia,'Times New Roman',serif" font-weight="700" font-size="11" fill="${g}">A</text>
+  </g>
+  <rect x="0.6" y="0.6" width="${CARD_W - 1.2}" height="${CARD_H - 1.2}" rx="${CARD_R}" fill="url(#${noiseId})" opacity="0.05"/>
+</svg>`;
+}
+
+// presenter.js — converts (normalized) engine events into an animation queue
+// (spec: engine events → animation queue). Each step is a pure descriptor the
+// Timeline schedules; reduced motion collapses every step to an instant cut.
+//
+// The Phase-6 adapter fills each event's coordinates from the render layout, so
+// this module stays DOM-free and testable. Phase-5a covers the core motions;
+// the cinematic catalogue (WIN, SHOWDOWN, ALL-IN, timer…) is Phase-5b.
+
+const MS = {
+  deal: 420, dealStagger: 100,      // DEAL: parabola + 720° spin + bounce, 100ms stagger
+  flip: 380,                         // FLIP: 3D rotateY 0→180
+  bet: 320, betStagger: 40,          // BET: chip arc, 40ms stagger
+  collect: 360, collectStagger: 20,  // COLLECT: bets → pot
+  boardSlide: 300, boardStagger: 120,// FLOP/TURN/RIVER: slide-in → flip
+};
+const MOTION_MS = MS;
+
+const dealStep = e => ({
+  id: e.id, kind: 'deal', path: 'parabola', lift: e.lift ?? 90,
+  from: { x: e.from.x, y: e.from.y, rotate: 0, scale: 0.92, opacity: 0 },
+  to: { x: e.to.x, y: e.to.y, rotate: 720, scale: 1, opacity: 1 },
+  duration: MS.deal, delay: (e.order || 0) * MS.dealStagger, easing: 'deal',
+});
+const flipStep = e => ({
+  id: e.id, kind: 'flip', from: { rotateY: 0 }, to: { rotateY: 180 },
+  duration: MS.flip, delay: e.delay || 0, easing: 'smooth', faceUp: e.faceUp !== false,
+});
+const betStep = e => ({
+  id: e.id, kind: 'bet', path: 'parabola', lift: e.lift ?? 40,
+  from: { x: e.from.x, y: e.from.y, scale: 0.9, opacity: 0.85 },
+  to: { x: e.to.x, y: e.to.y, scale: 1, opacity: 1 },
+  duration: MS.bet, delay: (e.order || 0) * MS.betStagger, easing: 'pop',
+});
+const collectStep = (it, i) => ({
+  id: it.id, kind: 'collect', from: { x: it.from.x, y: it.from.y, opacity: 1 },
+  to: { x: it.to.x, y: it.to.y, scale: 0.92, opacity: 0.9 },
+  duration: MS.collect, delay: i * MS.collectStagger, easing: 'collect',
+});
+function boardReveal(e) {
+  const steps = [];
+  (e.cards || []).forEach((c, i) => {
+    const base = i * MS.boardStagger;
+    steps.push({ id: c.id, kind: 'deal', path: 'parabola', lift: 30, from: { x: c.from.x, y: c.from.y, rotate: 0, scale: 0.96, opacity: 0 }, to: { x: c.to.x, y: c.to.y, rotate: 0, scale: 1, opacity: 1 }, duration: MS.boardSlide, delay: base, easing: 'deal' });
+    steps.push({ id: c.id, kind: 'flip', from: { rotateY: 0 }, to: { rotateY: 180 }, duration: MS.flip, delay: base + MS.boardSlide, easing: 'smooth', faceUp: true });
+  });
+  return steps;
+}
+
+const MOTIONS = {
+  DEAL: e => [dealStep(e)],
+  BURN: e => [{ ...dealStep({ ...e, lift: 40 }), to: { x: e.to.x, y: e.to.y, rotate: 360, scale: 0.9, opacity: 0.55 } }],
+  FLIP: e => [flipStep(e)],
+  BET: e => [betStep(e)],
+  POST_BLIND: e => [betStep(e)],
+  COLLECT: e => (e.items || []).map(collectStep),
+  FLOP: boardReveal, TURN: boardReveal, RIVER: boardReveal,
+};
+
+const instant = s => ({ ...s, duration: 0, delay: 0 });
+class Presenter {
+  constructor({ reducedMotion = false } = {}) { this.reducedMotion = !!reducedMotion; }
+  setReducedMotion(v) { this.reducedMotion = !!v; }            // spec 3.4 toggle / prefers-reduced-motion
+  present(event) {
+    const f = MOTIONS[event.type];
+    let steps = f ? f(event) : [];
+    return this.reducedMotion ? steps.map(instant) : steps;
+  }
+  presentAll(events) { return events.flatMap(e => this.present(e)); }
+}
+
+// animator.js — schedule and run animation steps. The Timeline is a pure,
+// samplable function of time (testable without rAF); `play` drives it with
+// requestAnimationFrame in the browser; `domApply` writes transform/opacity
+// (and flip face-swap) to elements. 60fps, transform/opacity only (spec 3.4).
+
+function propsAt(s, t) {
+  const start = s.delay || 0, dur = s.duration || 0, end = start + dur;
+  if (dur === 0 || t >= end) return { ...s.to };
+  if (t <= start) return { ...s.from };
+  const p = easeByName(s.easing)((t - start) / dur);
+  const out = {};
+  for (const k of new Set([...Object.keys(s.from), ...Object.keys(s.to)])) out[k] = lerp(s.from[k] ?? 0, s.to[k] ?? 0, p);
+  if (s.path === 'parabola') { const pt = parabolaPoint({ x: s.from.x, y: s.from.y }, { x: s.to.x, y: s.to.y }, s.lift || 0, p); out.x = pt.x; out.y = pt.y; }
+  return out;
+}
+class Timeline {
+  constructor(steps = [], { reducedMotion = false } = {}) {
+    this.steps = reducedMotion ? steps.map(s => ({ ...s, duration: 0, delay: 0 })) : steps;
+    this.duration = this.steps.reduce((m, s) => Math.max(m, (s.delay || 0) + (s.duration || 0)), 0);
+  }
+  // Apply the correct props for every step at time t. Multiple steps on one
+  // target are MERGED (e.g. a deal sets x/y/scale, a later flip adds rotateY),
+  // so a flip never clobbers a card's position.
+  sampleAt(t, apply) {
+    const byId = new Map();
+    for (const s of this.steps) {
+      const prev = byId.get(s.id) || { props: {}, meta: {} };
+      prev.props = { ...prev.props, ...propsAt(s, t) };
+      prev.meta[s.kind] = s;
+      byId.set(s.id, prev);
+    }
+    for (const [id, { props, meta }] of byId) apply(id, props, meta);
+  }
+  done(t) { return t >= this.duration; }
+}
+const buildTimeline = (steps, opts) => new Timeline(steps, opts);
+
+// Drive a timeline to completion. raf/now injectable for tests.
+function play(timeline, apply, { raf, now, onDone } = {}) {
+  raf = raf || (typeof requestAnimationFrame !== 'undefined' ? requestAnimationFrame.bind(globalThis) : cb => setTimeout(() => cb(), 16));
+  now = now || (typeof performance !== 'undefined' ? () => performance.now() : () => Date.now());
+  const start = now();
+  (function frame() {
+    const t = now() - start;
+    timeline.sampleAt(t, apply);
+    if (timeline.done(t)) { onDone && onDone(); } else raf(frame);
+  })();
+}
+
+// Browser apply: write transform + opacity, and flip the face at rotateY > 90.
+function domApply(resolve) {
+  const get = typeof resolve === 'function' ? resolve : id => resolve[id];
+  return (id, props) => {
+    const el = get(id);
+    if (!el) return;
+    el.style.transform = transformString(props);
+    if (props.opacity != null) el.style.opacity = props.opacity;
+    if (props.rotateY != null) el.dataset.flipped = props.rotateY > 90 ? '1' : '0';
+  };
+}
+
+
+// ---- demo driver ----
+const stage = document.getElementById('stage');
+const reduced = document.getElementById('reduced');
+const els = {};
+const DECK = { x: 612, y: 26 };
+const HERO = [{ x: 300, y: 360 }, { x: 360, y: 360 }];
+const VILL = [{ x: 300, y: 30 }, { x: 360, y: 30 }];
+const BOARD = [0,1,2,3,4].map(i => ({ x: 214 + i * 66, y: 188 }));
+const POT = { x: 348, y: 250 };
+const HBET = { x: 330, y: 300 }, VBET = { x: 330, y: 96 };
+const presenter = new Presenter({ reducedMotion: reduced.checked });
+const apply = domApply(id => els[id]);
+const run = events => play(new Timeline(presenter.presentAll(events), { reducedMotion: presenter.reducedMotion }), apply);
+
+function cardEl(id, card) {
+  const d = document.createElement('div'); d.className = 'card'; d.id = id;
+  d.innerHTML = '<div class="layer back">' + cardBackSVG({ width: 60 }) + '</div><div class="layer face">' + cardFaceSVG(card, { width: 60 }) + '</div>';
+  d.style.opacity = 0; d.style.transform = transformString(DECK); stage.appendChild(d); els[id] = d; return d;
+}
+function chipEl(id, value, at) {
+  const d = document.createElement('div'); d.className = 'chip'; d.id = id;
+  d.innerHTML = chipSVG(value, { size: 40 }); d.style.transform = transformString(at); stage.appendChild(d); els[id] = d; return d;
+}
+
+const HOLE = { c00:{rank:14,suit:'s'}, c01:{rank:12,suit:'s'}, c10:{rank:7,suit:'h'}, c11:{rank:7,suit:'d'} };
+const BOARDC = [{rank:14,suit:'h'},{rank:13,suit:'d'},{rank:7,suit:'c'},{rank:2,suit:'s'},{rank:9,suit:'h'}];
+let boardShown = 0;
+
+function reset() {
+  stage.querySelectorAll('.card,.chip').forEach(n => n.remove()); for (const k in els) delete els[k]; boardShown = 0;
+  cardEl('c00', HOLE.c00); cardEl('c01', HOLE.c01); cardEl('c10', HOLE.c10); cardEl('c11', HOLE.c11);
+  BOARDC.forEach((c, i) => cardEl('b' + i, c));
+  ['k0','k1','k2','k3'].forEach((id, i) => chipEl(id, [100,25,100,500][i], i < 2 ? HERO[0] : VILL[0]));
+}
+reset();
+
+document.getElementById('deal').onclick = () => run([
+  { type:'DEAL', id:'c00', from:DECK, to:HERO[0], order:0 },
+  { type:'DEAL', id:'c10', from:DECK, to:VILL[0], order:1 },
+  { type:'DEAL', id:'c01', from:DECK, to:HERO[1], order:2 },
+  { type:'DEAL', id:'c11', from:DECK, to:VILL[1], order:3 },
+]);
+document.getElementById('flip').onclick = () => run([{ type:'FLIP', id:'c00' }, { type:'FLIP', id:'c01' }]);
+document.getElementById('board').onclick = () => {
+  if (boardShown === 0) { run([{ type:'FLOP', cards:[0,1,2].map(i => ({ id:'b'+i, from:DECK, to:BOARD[i] })) }]); boardShown = 3; }
+  else if (boardShown < 5) { run([{ type: boardShown===3?'TURN':'RIVER', cards:[{ id:'b'+boardShown, from:DECK, to:BOARD[boardShown] }] }]); boardShown++; }
+};
+document.getElementById('bet').onclick = () => run([
+  { type:'BET', id:'k0', from:HERO[0], to:HBET, order:0 }, { type:'BET', id:'k1', from:HERO[0], to:HBET, order:1 },
+  { type:'BET', id:'k2', from:VILL[0], to:VBET, order:0 }, { type:'BET', id:'k3', from:VILL[0], to:VBET, order:1 },
+]);
+document.getElementById('collect').onclick = () => run([{ type:'COLLECT', items:[
+  { id:'k0', from:HBET, to:POT }, { id:'k1', from:HBET, to:POT }, { id:'k2', from:VBET, to:POT }, { id:'k3', from:VBET, to:POT },
+] }]);
+document.getElementById('reset').onclick = reset;
+reduced.onchange = () => presenter.setReducedMotion(reduced.checked);
+
+  </script>
+</body></html>

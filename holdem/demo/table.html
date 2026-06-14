@@ -1,0 +1,716 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Table + HUD — preview</title>
+<style>
+/* tokens.css — CSS custom-property surface of the design tokens (spec 3.1).
+   These mirror PALETTE/EASES in tokens.js (the canonical source). Used by the
+   table, cards, and HUD CSS in Phases 4–6. Chip face colours are intentionally
+   NOT here — chips are drawn as SVG straight from tokens.js. */
+
+:root {
+  /* felt */
+  --felt-900: #0b3d2e;
+  --felt-700: #14543f;
+  /* rail / trim */
+  --rail-leather: #3a2620;
+  --wood: #5c3a21;
+  /* accents */
+  --gold: #d4af37;
+  --gold-glow: rgba(212, 175, 55, .55);
+  /* cards */
+  --ink: #101418;
+  --paper: #f6f1e7;
+  /* status */
+  --danger: #e0454f;
+  --info: #39c2d7;
+  /* easing (per-motion, see spec 3.4) */
+  --ease-deal: cubic-bezier(.18, .9, .32, 1.08);
+  --ease-collect: cubic-bezier(.5, -.28, .74, .05); /* easeInBack */
+  --ease-pop: cubic-bezier(.34, 1.56, .64, 1);      /* overshoot */
+}
+
+/* cards.css — card presentation/interaction (spec 3.3). The SVG draws the card;
+   this adds the hover lift (4px) and shadow expansion on the card element. */
+
+.playing-card {
+  display: block;
+  border-radius: 12px;
+  transition: transform .18s var(--ease-pop, cubic-bezier(.34, 1.56, .64, 1)),
+    filter .18s ease;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, .35));
+  will-change: transform;
+}
+
+.playing-card:hover {
+  transform: translateY(-4px);
+  filter: drop-shadow(0 10px 18px rgba(0, 0, 0, .45));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .playing-card {
+    transition: none;
+  }
+
+  .playing-card:hover {
+    transform: none;
+  }
+}
+
+/* table.css — scene composition + HUD (spec 3.5). Positioning for the seats,
+   chip piles, dealer button, and the glassmorphism insights panel. */
+
+.table-scene { position: relative; font-family: Georgia, 'Times New Roman', serif; color: var(--paper, #f6f1e7); }
+.table-bg { position: absolute; inset: 0; }
+.table-bg svg { display: block; }
+
+.abs { position: absolute; transform: translate(-50%, -50%); }
+
+/* community + pot */
+.board { display: flex; gap: 6px; }
+.board .playing-card { filter: drop-shadow(0 3px 6px rgba(0, 0, 0, .5)); }
+.pot { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.pot-label { font-size: 13px; letter-spacing: .08em; color: var(--gold, #d4af37);
+  background: rgba(0, 0, 0, .35); padding: 2px 10px; border-radius: 999px; }
+
+/* chip piles */
+.pile { display: flex; align-items: flex-end; gap: 6px; }
+.pile-col { display: flex; flex-direction: column; align-items: center; }
+.pile-stack { position: relative; }
+.pile-stack .ch { position: absolute; left: 0; line-height: 0; }
+.pile-x, .commit-x { font-size: 10px; opacity: .8; margin-top: 3px; }
+
+/* hands */
+.hand { display: flex; }
+.hand .playing-card + .playing-card { margin-left: -28px; }
+.muck { opacity: .35; filter: grayscale(.4); }
+
+/* seat plate */
+.seat-plate { min-width: 88px; text-align: center; padding: 6px 12px; border-radius: 12px;
+  background: linear-gradient(180deg, rgba(20, 30, 26, .92), rgba(8, 16, 12, .92));
+  border: 1px solid rgba(212, 175, 55, .35); box-shadow: 0 4px 14px rgba(0, 0, 0, .45); }
+.seat-name { font-size: 13px; font-weight: 700; letter-spacing: .03em; }
+.seat-stack { font-size: 12px; color: var(--gold, #d4af37); }
+.seat-plate.hero { border-color: var(--gold, #d4af37); box-shadow: 0 0 0 1px var(--gold, #d4af37), 0 6px 18px rgba(0, 0, 0, .5); }
+.seat-plate.active { box-shadow: 0 0 0 2px var(--info, #39c2d7), 0 0 18px rgba(57, 194, 215, .5); }
+.seat-plate.allin { border-color: var(--danger, #e0454f); box-shadow: 0 0 0 2px var(--danger, #e0454f), 0 0 18px rgba(224, 69, 79, .45); }
+.seat-plate.folded { opacity: .5; }
+.commit { display: flex; flex-direction: column; align-items: center; }
+
+/* dealer button */
+.dealer { width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center;
+  font-size: 12px; font-weight: 700; color: #1b2030;
+  background: radial-gradient(circle at 38% 32%, #fff, #d9d2c4);
+  box-shadow: 0 2px 5px rgba(0, 0, 0, .5), inset 0 0 0 2px rgba(0, 0, 0, .12); }
+
+/* glassmorphism HUD */
+.hud-mount { position: absolute; top: 16px; right: 16px; }
+.hud-panel { min-width: 168px; padding: 12px 14px; border-radius: 14px;
+  background: rgba(18, 28, 24, .42); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+  border: 1px solid rgba(212, 175, 55, .35); box-shadow: 0 8px 28px rgba(0, 0, 0, .45); }
+.hud-title { font-size: 10px; letter-spacing: .24em; text-transform: uppercase; opacity: .6; margin-bottom: 8px; }
+.hud-row { display: flex; justify-content: space-between; align-items: baseline; gap: 14px; padding: 3px 0; }
+.hud-label { font-size: 12px; opacity: .75; }
+.hud-value { font-size: 14px; font-weight: 700; }
+.hud-equity { color: var(--info, #39c2d7); }
+.hud-hint { color: var(--gold, #d4af37); font-size: 12px; }
+
+@media (prefers-reduced-motion: reduce) { .table-scene * { transition: none !important; } }
+
+  body{ margin:0; min-height:100vh; display:grid; place-items:center; gap:18px;
+        background:radial-gradient(140% 120% at 50% 0%, #123 0%, #050a08 70%); padding:40px 16px; }
+  h1{ font-family:Georgia,serif; color:var(--gold); letter-spacing:.06em; margin:0;
+      text-shadow:0 1px 0 #0008, 0 0 18px rgba(212,175,55,.55); font-size:24px; }
+  p.cap{ font-family:Georgia,serif; color:#cdbf9e; font-style:italic; margin:0; opacity:.75; font-size:13px; }
+</style></head>
+<body>
+  <h1>Table &amp; HUD</h1>
+  <p class="cap">composed from a gameView snapshot &mdash; flop, side pot, all-in, dealer button</p>
+  <div class="table-scene" style="width:900px;height:560px">
+    <div class="table-bg"><svg class="poker-table" width="900" height="560" viewBox="0 0 900 560" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="poker table">
+  <defs>
+    <filter id="tbl_0-noise"><feTurbulence type="fractalNoise" baseFrequency="0.7" numOctaves="2" stitchTiles="stitch" result="n"/><feColorMatrix in="n" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.7 0"/></filter>
+    <radialGradient id="tbl_0-felt" cx="50%" cy="46%" r="62%"><stop offset="0%" stop-color="#14543f"/><stop offset="78%" stop-color="#0b3d2e"/><stop offset="100%" stop-color="#07271d"/></radialGradient>
+    <linearGradient id="tbl_0-wood" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#6b4526"/><stop offset="50%" stop-color="#5c3a21"/><stop offset="100%" stop-color="#3f2815"/></linearGradient>
+    <clipPath id="tbl_0-clip"><ellipse cx="450" cy="280" rx="404" ry="234" /></clipPath>
+  </defs>
+  <ellipse cx="450" cy="280" rx="448" ry="278" fill="url(#tbl_0-wood)"/>
+  <ellipse cx="450" cy="280" rx="442" ry="272" fill="none" stroke="#241712" stroke-width="2" opacity="0.6"/>
+  <ellipse cx="450" cy="280" rx="434" ry="264" fill="#3a2620"/>
+  <ellipse cx="450" cy="280" rx="431" ry="261" fill="none" stroke="#5a3d33" stroke-width="1.4" stroke-dasharray="2 6" opacity="0.8"/>
+  <ellipse cx="450" cy="280" rx="404" ry="234" fill="url(#tbl_0-felt)"/>
+  <g clip-path="url(#tbl_0-clip)"><ellipse cx="450" cy="280" rx="404" ry="234" fill="url(#tbl_0-noise)" opacity="0.06"/></g>
+  <ellipse cx="450" cy="280" rx="282.79999999999995" ry="163.79999999999998" fill="none" stroke="#d4af37" stroke-width="1.2" stroke-dasharray="1 9" opacity="0.5"/>
+  <g class="watermark" opacity="0.10" transform="translate(450 280)">
+    <circle r="54" fill="none" stroke="#d4af37" stroke-width="2"/>
+    <circle r="44" fill="none" stroke="#d4af37" stroke-width="1"/>
+    <text x="0" y="2" text-anchor="middle" dominant-baseline="central" font-family="Georgia,'Times New Roman',serif" font-weight="700" font-size="42" fill="#d4af37">A</text>
+  </g>
+</svg></div>
+    <div class="abs board-anchor" style="left:450px;top:238px"><div class="board"><svg class="playing-card" data-card="Ah" width="58" height="81" viewBox="0 0 90 126" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="A of h">
+  <defs><filter id="cf14h_0-noise" x="0" y="0" width="100%" height="100%">
+    <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" stitchTiles="stitch" result="n"/>
+    <feColorMatrix in="n" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.6 0"/>
+  </filter></defs>
+  <rect x="0.6" y="0.6" width="88.8" height="124.8" rx="12" fill="#f6f1e7" stroke="#0000001f" stroke-width="1"/>
+  <g class="card-center"><path class="suit suit-h" d="M50 88 C20 64 6 45 6 29 C6 15 17 7 29 7 C39 7 46 13 50 21 C54 13 61 7 71 7 C83 7 94 15 94 29 C94 45 80 64 50 88 Z" fill="#e0454f" transform="translate(22 40) scale(0.46)"/></g>
+  <g class="corner-index">
+    <text x="11" y="20" text-anchor="middle" font-family="Georgia,'Times New Roman',serif" font-weight="700" font-size="16" fill="#e0454f">A</text>
+    <path class="suit suit-h" d="M50 88 C20 64 6 45 6 29 C6 15 17 7 29 7 C39 7 46 13 50 21 C54 13 61 7 71 7 C83 7 94 15 94 29 C94 45 80 64 50 88 Z" fill="#e0454f" transform="translate(5.5 25.5) scale(0.11)"/>
+  </g>
+  <g transform="rotate(180 45 63)"><g class="corner-index">
+    <text x="11" y="20" text-anchor="middle" font-family="Georgia,'Times New Roman',serif" font-weight="700" font-size="16" fill="#e0454f">A</text>
+    <path class="suit suit-h" d="M50 88 C20 64 6 45 6 29 C6 15 17 7 29 7 C39 7 46 13 50 21 C54 13 61 7 71 7 C83 7 94 15 94 29 C94 45 80 64 50 88 Z" fill="#e0454f" transform="translate(5.5 25.5) scale(0.11)"/>
+  </g></g>
+  <rect x="0.6" y="0.6" width="88.8" height="124.8" rx="12" fill="url(#cf14h_0-noise)" opacity="0.05"/>
+</svg><svg class="playing-card" data-card="Kd" width="58" height="81" viewBox="0 0 90 126" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="K of d">
+  <defs><filter id="cf13d_1-noise" x="0" y="0" width="100%" height="100%">
+    <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" stitchTiles="stitch" result="n"/>
+    <feColorMatrix in="n" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.6 0"/>
+  </filter></defs>
+  <rect x="0.6" y="0.6" width="88.8" height="124.8" rx="12" fill="#f6f1e7" stroke="#0000001f" stroke-width="1"/>
+  <g class="card-center"><g class="court">
+    <rect x="20" y="26" width="50" height="74" rx="6" fill="none" stroke="#d4af37" stroke-width="1.6"/>
+    <rect x="24" y="30" width="42" height="66" rx="4" fill="none" stroke="#e0454f" stroke-width="1" opacity="0.55"/>
+    <path class="suit suit-d" d="M50 5 C58 28 70 42 88 50 C70 58 58 72 50 95 C42 72 30 58 12 50 C30 42 42 28 50 5 Z" fill="#e0454f" transform="translate(36.5 32.5) scale(0.17)"/>
+    <text x="45" y="66" text-anchor="middle" dominant-baseline="central" font-family="Georgia,'Times New Roman',serif" font-weight="700" font-size="40" fill="#e0454f">K</text>
+    <path class="suit suit-d" d="M50 5 C58 28 70 42 88 50 C70 58 58 72 50 95 C42 72 30 58 12 50 C30 42 42 28 50 5 Z" fill="#e0454f" transform="translate(36.5 81.5) scale(0.17) rotate(180 50 50)"/>
+  </g></g>
+  <g class="corner-index">
+    <text x="11" y="20" text-anchor="middle" font-family="Georgia,'Times New Roman',serif" font-weight="700" font-size="16" fill="#e0454f">K</text>
+    <path class="suit suit-d" d="M50 5 C58 28 70 42 88 50 C70 58 58 72 50 95 C42 72 30 58 12 50 C30 42 42 28 50 5 Z" fill="#e0454f" transform="translate(5.5 25.5) scale(0.11)"/>
+  </g>
+  <g transform="rotate(180 45 63)"><g class="corner-index">
+    <text x="11" y="20" text-anchor="middle" font-family="Georgia,'Times New Roman',serif" font-weight="700" font-size="16" fill="#e0454f">K</text>
+    <path class="suit suit-d" d="M50 5 C58 28 70 42 88 50 C70 58 58 72 50 95 C42 72 30 58 12 50 C30 42 42 28 50 5 Z" fill="#e0454f" transform="translate(5.5 25.5) scale(0.11)"/>
+  </g></g>
+  <rect x="0.6" y="0.6" width="88.8" height="124.8" rx="12" fill="url(#cf13d_1-noise)" opacity="0.05"/>
+</svg><svg class="playing-card" data-card="7c" width="58" height="81" viewBox="0 0 90 126" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="7 of c">
+  <defs><filter id="cf7c_2-noise" x="0" y="0" width="100%" height="100%">
+    <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" stitchTiles="stitch" result="n"/>
+    <feColorMatrix in="n" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.6 0"/>
+  </filter></defs>
+  <rect x="0.6" y="0.6" width="88.8" height="124.8" rx="12" fill="#f6f1e7" stroke="#0000001f" stroke-width="1"/>
+  <g class="card-center"><path class="suit suit-c" d="M50 7 C60 7 68 15 68 25 C68 29 67 32 65 35 C70 32 75 31 79 31 C89 31 96 39 96 49 C96 59 88 66 79 66 C71 66 64 62 60 56 C61 65 64 78 70 92 L30 92 C36 78 39 65 40 56 C36 62 29 66 21 66 C12 66 4 59 4 49 C4 39 11 31 21 31 C25 31 30 32 35 35 C33 32 32 29 32 25 C32 15 40 7 50 7 Z" fill="#101418" transform="translate(22.5 22.5) scale(0.15)"/><path class="suit suit-c" d="M50 7 C60 7 68 15 68 25 C68 29 67 32 65 35 C70 32 75 31 79 31 C89 31 96 39 96 49 C96 59 88 66 79 66 C71 66 64 62 60 56 C61 65 64 78 70 92 L30 92 C36 78 39 65 40 56 C36 62 29 66 21 66 C12 66 4 59 4 49 C4 39 11 31 21 31 C25 31 30 32 35 35 C33 32 32 29 32 25 C32 15 40 7 50 7 Z" fill="#101418" transform="translate(52.5 22.5) scale(0.15)"/><path class="suit suit-c" d="M50 7 C60 7 68 15 68 25 C68 29 67 32 65 35 C70 32 75 31 79 31 C89 31 96 39 96 49 C96 59 88 66 79 66 C71 66 64 62 60 56 C61 65 64 78 70 92 L30 92 C36 78 39 65 40 56 C36 62 29 66 21 66 C12 66 4 59 4 49 C4 39 11 31 21 31 C25 31 30 32 35 35 C33 32 32 29 32 25 C32 15 40 7 50 7 Z" fill="#101418" transform="translate(37.5 31.5) scale(0.15)"/><path class="suit suit-c" d="M50 7 C60 7 68 15 68 25 C68 29 67 32 65 35 C70 32 75 31 79 31 C89 31 96 39 96 49 C96 59 88 66 79 66 C71 66 64 62 60 56 C61 65 64 78 70 92 L30 92 C36 78 39 65 40 56 C36 62 29 66 21 66 C12 66 4 59 4 49 C4 39 11 31 21 31 C25 31 30 32 35 35 C33 32 32 29 32 25 C32 15 40 7 50 7 Z" fill="#101418" transform="translate(22.5 55.5) scale(0.15)"/><path class="suit suit-c" d="M50 7 C60 7 68 15 68 25 C68 29 67 32 65 35 C70 32 75 31 79 31 C89 31 96 39 96 49 C96 59 88 66 79 66 C71 66 64 62 60 56 C61 65 64 78 70 92 L30 92 C36 78 39 65 40 56 C36 62 29 66 21 66 C12 66 4 59 4 49 C4 39 11 31 21 31 C25 31 30 32 35 35 C33 32 32 29 32 25 C32 15 40 7 50 7 Z" fill="#101418" transform="translate(52.5 55.5) scale(0.15)"/><path class="suit suit-c" d="M50 7 C60 7 68 15 68 25 C68 29 67 32 65 35 C70 32 75 31 79 31 C89 31 96 39 96 49 C96 59 88 66 79 66 C71 66 64 62 60 56 C61 65 64 78 70 92 L30 92 C36 78 39 65 40 56 C36 62 29 66 21 66 C12 66 4 59 4 49 C4 39 11 31 21 31 C25 31 30 32 35 35 C33 32 32 29 32 25 C32 15 40 7 50 7 Z" fill="#101418" transform="translate(22.5 88.5) scale(0.15) rotate(180 50 50)"/><path class="suit suit-c" d="M50 7 C60 7 68 15 68 25 C68 29 67 32 65 35 C70 32 75 31 79 31 C89 31 96 39 96 49 C96 59 88 66 79 66 C71 66 64 62 60 56 C61 65 64 78 70 92 L30 92 C36 78 39 65 40 56 C36 62 29 66 21 66 C12 66 4 59 4 49 C4 39 11 31 21 31 C25 31 30 32 35 35 C33 32 32 29 32 25 C32 15 40 7 50 7 Z" fill="#101418" transform="translate(52.5 88.5) scale(0.15) rotate(180 50 50)"/></g>
+  <g class="corner-index">
+    <text x="11" y="20" text-anchor="middle" font-family="Georgia,'Times New Roman',serif" font-weight="700" font-size="16" fill="#101418">7</text>
+    <path class="suit suit-c" d="M50 7 C60 7 68 15 68 25 C68 29 67 32 65 35 C70 32 75 31 79 31 C89 31 96 39 96 49 C96 59 88 66 79 66 C71 66 64 62 60 56 C61 65 64 78 70 92 L30 92 C36 78 39 65 40 56 C36 62 29 66 21 66 C12 66 4 59 4 49 C4 39 11 31 21 31 C25 31 30 32 35 35 C33 32 32 29 32 25 C32 15 40 7 50 7 Z" fill="#101418" transform="translate(5.5 25.5) scale(0.11)"/>
+  </g>
+  <g transform="rotate(180 45 63)"><g class="corner-index">
+    <text x="11" y="20" text-anchor="middle" font-family="Georgia,'Times New Roman',serif" font-weight="700" font-size="16" fill="#101418">7</text>
+    <path class="suit suit-c" d="M50 7 C60 7 68 15 68 25 C68 29 67 32 65 35 C70 32 75 31 79 31 C89 31 96 39 96 49 C96 59 88 66 79 66 C71 66 64 62 60 56 C61 65 64 78 70 92 L30 92 C36 78 39 65 40 56 C36 62 29 66 21 66 C12 66 4 59 4 49 C4 39 11 31 21 31 C25 31 30 32 35 35 C33 32 32 29 32 25 C32 15 40 7 50 7 Z" fill="#101418" transform="translate(5.5 25.5) scale(0.11)"/>
+  </g></g>
+  <rect x="0.6" y="0.6" width="88.8" height="124.8" rx="12" fill="url(#cf7c_2-noise)" opacity="0.05"/>
+</svg></div></div><div class="abs pot-anchor" style="left:450px;top:332px"><div class="pot"><div class="pile"><div class="pile-col"><div class="pile-stack" style="width:30px;height:30px"><div class="ch" style="bottom:0px"><svg class="chip chip-gold" data-value="1000" width="30" height="30" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="1000 chip">
+  <defs>
+    <radialGradient id="chip1000_0-sheen" cx="38%" cy="32%" r="78%">
+      <stop offset="0%" stop-color="#d9bd75"/>
+      <stop offset="60%" stop-color="#c8a13a"/>
+      <stop offset="100%" stop-color="#a48430"/>
+    </radialGradient>
+    <filter id="chip1000_0-shadow" x="-30%" y="-20%" width="160%" height="170%">
+      <feDropShadow dx="0" dy="3.2" stdDeviation="3" flood-color="#000" flood-opacity="0.45"/>
+    </filter>
+  </defs>
+  <g filter="url(#chip1000_0-shadow)">
+    <circle cx="50" cy="53.5" r="46" fill="#6e5920"/>
+    <circle cx="50" cy="50" r="46" fill="url(#chip1000_0-sheen)"/>
+    <g class="edge-spots"><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#3a2c10" transform="rotate(0 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#3a2c10" transform="rotate(45 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#3a2c10" transform="rotate(90 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#3a2c10" transform="rotate(135 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#3a2c10" transform="rotate(180 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#3a2c10" transform="rotate(225 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#3a2c10" transform="rotate(270 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#3a2c10" transform="rotate(315 50 50)"/></g>
+    <circle cx="50" cy="50" r="34.5" fill="none" stroke="#f1d98a" stroke-width="2"/>
+    <circle cx="50" cy="50" r="30" fill="none" stroke="#f1d98a" stroke-width="1" opacity="0.7"/>
+    <circle cx="50" cy="50" r="20.5" fill="#f1d98a"/>
+    <circle cx="50" cy="50" r="20.5" fill="none" stroke="#bca96c" stroke-width="0.8"/>
+    <text class="chip-mono" x="50" y="50.5" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif" font-weight="700" font-size="22" fill="#2a2008">1K</text>
+  </g>
+</svg></div></div></div><div class="pile-col"><div class="pile-stack" style="width:30px;height:40px"><div class="ch" style="bottom:0px"><svg class="chip chip-black" data-value="100" width="30" height="30" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="100 chip">
+  <defs>
+    <radialGradient id="chip100_1-sheen" cx="38%" cy="32%" r="78%">
+      <stop offset="0%" stop-color="#5b5d60"/>
+      <stop offset="60%" stop-color="#15181c"/>
+      <stop offset="100%" stop-color="#111417"/>
+    </radialGradient>
+    <filter id="chip100_1-shadow" x="-30%" y="-20%" width="160%" height="170%">
+      <feDropShadow dx="0" dy="3.2" stdDeviation="3" flood-color="#000" flood-opacity="0.45"/>
+    </filter>
+  </defs>
+  <g filter="url(#chip100_1-shadow)">
+    <circle cx="50" cy="53.5" r="46" fill="#0c0d0f"/>
+    <circle cx="50" cy="50" r="46" fill="url(#chip100_1-sheen)"/>
+    <g class="edge-spots"><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#d4af37" transform="rotate(0 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#d4af37" transform="rotate(45 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#d4af37" transform="rotate(90 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#d4af37" transform="rotate(135 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#d4af37" transform="rotate(180 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#d4af37" transform="rotate(225 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#d4af37" transform="rotate(270 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#d4af37" transform="rotate(315 50 50)"/></g>
+    <circle cx="50" cy="50" r="34.5" fill="none" stroke="#d4af37" stroke-width="2"/>
+    <circle cx="50" cy="50" r="30" fill="none" stroke="#d4af37" stroke-width="1" opacity="0.7"/>
+    <circle cx="50" cy="50" r="20.5" fill="#1f2429"/>
+    <circle cx="50" cy="50" r="20.5" fill="none" stroke="#181c20" stroke-width="0.8"/>
+    <text class="chip-mono" x="50" y="50.5" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif" font-weight="700" font-size="17" fill="#f6f1e7">100</text>
+  </g>
+</svg></div><div class="ch" style="bottom:5px"><svg class="chip chip-black" data-value="100" width="30" height="30" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="100 chip">
+  <defs>
+    <radialGradient id="chip100_2-sheen" cx="38%" cy="32%" r="78%">
+      <stop offset="0%" stop-color="#5b5d60"/>
+      <stop offset="60%" stop-color="#15181c"/>
+      <stop offset="100%" stop-color="#111417"/>
+    </radialGradient>
+    <filter id="chip100_2-shadow" x="-30%" y="-20%" width="160%" height="170%">
+      <feDropShadow dx="0" dy="3.2" stdDeviation="3" flood-color="#000" flood-opacity="0.45"/>
+    </filter>
+  </defs>
+  <g filter="url(#chip100_2-shadow)">
+    <circle cx="50" cy="53.5" r="46" fill="#0c0d0f"/>
+    <circle cx="50" cy="50" r="46" fill="url(#chip100_2-sheen)"/>
+    <g class="edge-spots"><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#d4af37" transform="rotate(0 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#d4af37" transform="rotate(45 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#d4af37" transform="rotate(90 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#d4af37" transform="rotate(135 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#d4af37" transform="rotate(180 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#d4af37" transform="rotate(225 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#d4af37" transform="rotate(270 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#d4af37" transform="rotate(315 50 50)"/></g>
+    <circle cx="50" cy="50" r="34.5" fill="none" stroke="#d4af37" stroke-width="2"/>
+    <circle cx="50" cy="50" r="30" fill="none" stroke="#d4af37" stroke-width="1" opacity="0.7"/>
+    <circle cx="50" cy="50" r="20.5" fill="#1f2429"/>
+    <circle cx="50" cy="50" r="20.5" fill="none" stroke="#181c20" stroke-width="0.8"/>
+    <text class="chip-mono" x="50" y="50.5" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif" font-weight="700" font-size="17" fill="#f6f1e7">100</text>
+  </g>
+</svg></div><div class="ch" style="bottom:10px"><svg class="chip chip-black" data-value="100" width="30" height="30" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="100 chip">
+  <defs>
+    <radialGradient id="chip100_3-sheen" cx="38%" cy="32%" r="78%">
+      <stop offset="0%" stop-color="#5b5d60"/>
+      <stop offset="60%" stop-color="#15181c"/>
+      <stop offset="100%" stop-color="#111417"/>
+    </radialGradient>
+    <filter id="chip100_3-shadow" x="-30%" y="-20%" width="160%" height="170%">
+      <feDropShadow dx="0" dy="3.2" stdDeviation="3" flood-color="#000" flood-opacity="0.45"/>
+    </filter>
+  </defs>
+  <g filter="url(#chip100_3-shadow)">
+    <circle cx="50" cy="53.5" r="46" fill="#0c0d0f"/>
+    <circle cx="50" cy="50" r="46" fill="url(#chip100_3-sheen)"/>
+    <g class="edge-spots"><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#d4af37" transform="rotate(0 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#d4af37" transform="rotate(45 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#d4af37" transform="rotate(90 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#d4af37" transform="rotate(135 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#d4af37" transform="rotate(180 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#d4af37" transform="rotate(225 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#d4af37" transform="rotate(270 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#d4af37" transform="rotate(315 50 50)"/></g>
+    <circle cx="50" cy="50" r="34.5" fill="none" stroke="#d4af37" stroke-width="2"/>
+    <circle cx="50" cy="50" r="30" fill="none" stroke="#d4af37" stroke-width="1" opacity="0.7"/>
+    <circle cx="50" cy="50" r="20.5" fill="#1f2429"/>
+    <circle cx="50" cy="50" r="20.5" fill="none" stroke="#181c20" stroke-width="0.8"/>
+    <text class="chip-mono" x="50" y="50.5" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif" font-weight="700" font-size="17" fill="#f6f1e7">100</text>
+  </g>
+</svg></div></div></div><div class="pile-col"><div class="pile-stack" style="width:30px;height:40px"><div class="ch" style="bottom:0px"><svg class="chip chip-green" data-value="25" width="30" height="30" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="25 chip">
+  <defs>
+    <radialGradient id="chip25_4-sheen" cx="38%" cy="32%" r="78%">
+      <stop offset="0%" stop-color="#62a27e"/>
+      <stop offset="60%" stop-color="#1e7a46"/>
+      <stop offset="100%" stop-color="#196439"/>
+    </radialGradient>
+    <filter id="chip25_4-shadow" x="-30%" y="-20%" width="160%" height="170%">
+      <feDropShadow dx="0" dy="3.2" stdDeviation="3" flood-color="#000" flood-opacity="0.45"/>
+    </filter>
+  </defs>
+  <g filter="url(#chip25_4-shadow)">
+    <circle cx="50" cy="53.5" r="46" fill="#114327"/>
+    <circle cx="50" cy="50" r="46" fill="url(#chip25_4-sheen)"/>
+    <g class="edge-spots"><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#f6f1e7" transform="rotate(0 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#f6f1e7" transform="rotate(45 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#f6f1e7" transform="rotate(90 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#f6f1e7" transform="rotate(135 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#f6f1e7" transform="rotate(180 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#f6f1e7" transform="rotate(225 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#f6f1e7" transform="rotate(270 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#f6f1e7" transform="rotate(315 50 50)"/></g>
+    <circle cx="50" cy="50" r="34.5" fill="none" stroke="#d4af37" stroke-width="2"/>
+    <circle cx="50" cy="50" r="30" fill="none" stroke="#d4af37" stroke-width="1" opacity="0.7"/>
+    <circle cx="50" cy="50" r="20.5" fill="#155f37"/>
+    <circle cx="50" cy="50" r="20.5" fill="none" stroke="#104a2b" stroke-width="0.8"/>
+    <text class="chip-mono" x="50" y="50.5" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif" font-weight="700" font-size="22" fill="#f6f1e7">25</text>
+  </g>
+</svg></div><div class="ch" style="bottom:5px"><svg class="chip chip-green" data-value="25" width="30" height="30" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="25 chip">
+  <defs>
+    <radialGradient id="chip25_5-sheen" cx="38%" cy="32%" r="78%">
+      <stop offset="0%" stop-color="#62a27e"/>
+      <stop offset="60%" stop-color="#1e7a46"/>
+      <stop offset="100%" stop-color="#196439"/>
+    </radialGradient>
+    <filter id="chip25_5-shadow" x="-30%" y="-20%" width="160%" height="170%">
+      <feDropShadow dx="0" dy="3.2" stdDeviation="3" flood-color="#000" flood-opacity="0.45"/>
+    </filter>
+  </defs>
+  <g filter="url(#chip25_5-shadow)">
+    <circle cx="50" cy="53.5" r="46" fill="#114327"/>
+    <circle cx="50" cy="50" r="46" fill="url(#chip25_5-sheen)"/>
+    <g class="edge-spots"><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#f6f1e7" transform="rotate(0 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#f6f1e7" transform="rotate(45 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#f6f1e7" transform="rotate(90 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#f6f1e7" transform="rotate(135 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#f6f1e7" transform="rotate(180 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#f6f1e7" transform="rotate(225 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#f6f1e7" transform="rotate(270 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#f6f1e7" transform="rotate(315 50 50)"/></g>
+    <circle cx="50" cy="50" r="34.5" fill="none" stroke="#d4af37" stroke-width="2"/>
+    <circle cx="50" cy="50" r="30" fill="none" stroke="#d4af37" stroke-width="1" opacity="0.7"/>
+    <circle cx="50" cy="50" r="20.5" fill="#155f37"/>
+    <circle cx="50" cy="50" r="20.5" fill="none" stroke="#104a2b" stroke-width="0.8"/>
+    <text class="chip-mono" x="50" y="50.5" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif" font-weight="700" font-size="22" fill="#f6f1e7">25</text>
+  </g>
+</svg></div><div class="ch" style="bottom:10px"><svg class="chip chip-green" data-value="25" width="30" height="30" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="25 chip">
+  <defs>
+    <radialGradient id="chip25_6-sheen" cx="38%" cy="32%" r="78%">
+      <stop offset="0%" stop-color="#62a27e"/>
+      <stop offset="60%" stop-color="#1e7a46"/>
+      <stop offset="100%" stop-color="#196439"/>
+    </radialGradient>
+    <filter id="chip25_6-shadow" x="-30%" y="-20%" width="160%" height="170%">
+      <feDropShadow dx="0" dy="3.2" stdDeviation="3" flood-color="#000" flood-opacity="0.45"/>
+    </filter>
+  </defs>
+  <g filter="url(#chip25_6-shadow)">
+    <circle cx="50" cy="53.5" r="46" fill="#114327"/>
+    <circle cx="50" cy="50" r="46" fill="url(#chip25_6-sheen)"/>
+    <g class="edge-spots"><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#f6f1e7" transform="rotate(0 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#f6f1e7" transform="rotate(45 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#f6f1e7" transform="rotate(90 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#f6f1e7" transform="rotate(135 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#f6f1e7" transform="rotate(180 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#f6f1e7" transform="rotate(225 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#f6f1e7" transform="rotate(270 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#f6f1e7" transform="rotate(315 50 50)"/></g>
+    <circle cx="50" cy="50" r="34.5" fill="none" stroke="#d4af37" stroke-width="2"/>
+    <circle cx="50" cy="50" r="30" fill="none" stroke="#d4af37" stroke-width="1" opacity="0.7"/>
+    <circle cx="50" cy="50" r="20.5" fill="#155f37"/>
+    <circle cx="50" cy="50" r="20.5" fill="none" stroke="#104a2b" stroke-width="0.8"/>
+    <text class="chip-mono" x="50" y="50.5" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif" font-weight="700" font-size="22" fill="#f6f1e7">25</text>
+  </g>
+</svg></div></div></div><div class="pile-col"><div class="pile-stack" style="width:30px;height:35px"><div class="ch" style="bottom:0px"><svg class="chip chip-red" data-value="5" width="30" height="30" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="5 chip">
+  <defs>
+    <radialGradient id="chip5_7-sheen" cx="38%" cy="32%" r="78%">
+      <stop offset="0%" stop-color="#d3746b"/>
+      <stop offset="60%" stop-color="#c0392b"/>
+      <stop offset="100%" stop-color="#9d2f23"/>
+    </radialGradient>
+    <filter id="chip5_7-shadow" x="-30%" y="-20%" width="160%" height="170%">
+      <feDropShadow dx="0" dy="3.2" stdDeviation="3" flood-color="#000" flood-opacity="0.45"/>
+    </filter>
+  </defs>
+  <g filter="url(#chip5_7-shadow)">
+    <circle cx="50" cy="53.5" r="46" fill="#6a1f18"/>
+    <circle cx="50" cy="50" r="46" fill="url(#chip5_7-sheen)"/>
+    <g class="edge-spots"><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#f6f1e7" transform="rotate(0 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#f6f1e7" transform="rotate(45 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#f6f1e7" transform="rotate(90 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#f6f1e7" transform="rotate(135 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#f6f1e7" transform="rotate(180 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#f6f1e7" transform="rotate(225 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#f6f1e7" transform="rotate(270 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#f6f1e7" transform="rotate(315 50 50)"/></g>
+    <circle cx="50" cy="50" r="34.5" fill="none" stroke="#d4af37" stroke-width="2"/>
+    <circle cx="50" cy="50" r="30" fill="none" stroke="#d4af37" stroke-width="1" opacity="0.7"/>
+    <circle cx="50" cy="50" r="20.5" fill="#9c2b20"/>
+    <circle cx="50" cy="50" r="20.5" fill="none" stroke="#7a2219" stroke-width="0.8"/>
+    <text class="chip-mono" x="50" y="50.5" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif" font-weight="700" font-size="22" fill="#f6f1e7">5</text>
+  </g>
+</svg></div><div class="ch" style="bottom:5px"><svg class="chip chip-red" data-value="5" width="30" height="30" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="5 chip">
+  <defs>
+    <radialGradient id="chip5_8-sheen" cx="38%" cy="32%" r="78%">
+      <stop offset="0%" stop-color="#d3746b"/>
+      <stop offset="60%" stop-color="#c0392b"/>
+      <stop offset="100%" stop-color="#9d2f23"/>
+    </radialGradient>
+    <filter id="chip5_8-shadow" x="-30%" y="-20%" width="160%" height="170%">
+      <feDropShadow dx="0" dy="3.2" stdDeviation="3" flood-color="#000" flood-opacity="0.45"/>
+    </filter>
+  </defs>
+  <g filter="url(#chip5_8-shadow)">
+    <circle cx="50" cy="53.5" r="46" fill="#6a1f18"/>
+    <circle cx="50" cy="50" r="46" fill="url(#chip5_8-sheen)"/>
+    <g class="edge-spots"><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#f6f1e7" transform="rotate(0 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#f6f1e7" transform="rotate(45 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#f6f1e7" transform="rotate(90 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#f6f1e7" transform="rotate(135 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#f6f1e7" transform="rotate(180 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#f6f1e7" transform="rotate(225 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#f6f1e7" transform="rotate(270 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#f6f1e7" transform="rotate(315 50 50)"/></g>
+    <circle cx="50" cy="50" r="34.5" fill="none" stroke="#d4af37" stroke-width="2"/>
+    <circle cx="50" cy="50" r="30" fill="none" stroke="#d4af37" stroke-width="1" opacity="0.7"/>
+    <circle cx="50" cy="50" r="20.5" fill="#9c2b20"/>
+    <circle cx="50" cy="50" r="20.5" fill="none" stroke="#7a2219" stroke-width="0.8"/>
+    <text class="chip-mono" x="50" y="50.5" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif" font-weight="700" font-size="22" fill="#f6f1e7">5</text>
+  </g>
+</svg></div></div></div><div class="pile-col"><div class="pile-stack" style="width:30px;height:35px"><div class="ch" style="bottom:0px"><svg class="chip chip-white" data-value="1" width="30" height="30" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="1 chip">
+  <defs>
+    <radialGradient id="chip1_9-sheen" cx="38%" cy="32%" r="78%">
+      <stop offset="0%" stop-color="#f5f2ea"/>
+      <stop offset="60%" stop-color="#f1ece1"/>
+      <stop offset="100%" stop-color="#c6c2b9"/>
+    </radialGradient>
+    <filter id="chip1_9-shadow" x="-30%" y="-20%" width="160%" height="170%">
+      <feDropShadow dx="0" dy="3.2" stdDeviation="3" flood-color="#000" flood-opacity="0.45"/>
+    </filter>
+  </defs>
+  <g filter="url(#chip1_9-shadow)">
+    <circle cx="50" cy="53.5" r="46" fill="#85827c"/>
+    <circle cx="50" cy="50" r="46" fill="url(#chip1_9-sheen)"/>
+    <g class="edge-spots"><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#2a3550" transform="rotate(0 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#2a3550" transform="rotate(45 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#2a3550" transform="rotate(90 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#2a3550" transform="rotate(135 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#2a3550" transform="rotate(180 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#2a3550" transform="rotate(225 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#2a3550" transform="rotate(270 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#2a3550" transform="rotate(315 50 50)"/></g>
+    <circle cx="50" cy="50" r="34.5" fill="none" stroke="#b08d2a" stroke-width="2"/>
+    <circle cx="50" cy="50" r="30" fill="none" stroke="#b08d2a" stroke-width="1" opacity="0.7"/>
+    <circle cx="50" cy="50" r="20.5" fill="#e7dcc2"/>
+    <circle cx="50" cy="50" r="20.5" fill="none" stroke="#b4ac97" stroke-width="0.8"/>
+    <text class="chip-mono" x="50" y="50.5" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif" font-weight="700" font-size="22" fill="#1b2030">1</text>
+  </g>
+</svg></div><div class="ch" style="bottom:5px"><svg class="chip chip-white" data-value="1" width="30" height="30" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="1 chip">
+  <defs>
+    <radialGradient id="chip1_10-sheen" cx="38%" cy="32%" r="78%">
+      <stop offset="0%" stop-color="#f5f2ea"/>
+      <stop offset="60%" stop-color="#f1ece1"/>
+      <stop offset="100%" stop-color="#c6c2b9"/>
+    </radialGradient>
+    <filter id="chip1_10-shadow" x="-30%" y="-20%" width="160%" height="170%">
+      <feDropShadow dx="0" dy="3.2" stdDeviation="3" flood-color="#000" flood-opacity="0.45"/>
+    </filter>
+  </defs>
+  <g filter="url(#chip1_10-shadow)">
+    <circle cx="50" cy="53.5" r="46" fill="#85827c"/>
+    <circle cx="50" cy="50" r="46" fill="url(#chip1_10-sheen)"/>
+    <g class="edge-spots"><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#2a3550" transform="rotate(0 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#2a3550" transform="rotate(45 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#2a3550" transform="rotate(90 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#2a3550" transform="rotate(135 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#2a3550" transform="rotate(180 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#2a3550" transform="rotate(225 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#2a3550" transform="rotate(270 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#2a3550" transform="rotate(315 50 50)"/></g>
+    <circle cx="50" cy="50" r="34.5" fill="none" stroke="#b08d2a" stroke-width="2"/>
+    <circle cx="50" cy="50" r="30" fill="none" stroke="#b08d2a" stroke-width="1" opacity="0.7"/>
+    <circle cx="50" cy="50" r="20.5" fill="#e7dcc2"/>
+    <circle cx="50" cy="50" r="20.5" fill="none" stroke="#b4ac97" stroke-width="0.8"/>
+    <text class="chip-mono" x="50" y="50.5" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif" font-weight="700" font-size="22" fill="#1b2030">1</text>
+  </g>
+</svg></div></div></div></div><div class="pot-label">Pot 1,387</div></div></div><div class="abs " style="left:450px;top:470.624px"><div class="hand"><svg class="playing-card" data-card="As" width="48" height="67" viewBox="0 0 90 126" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="A of s">
+  <defs><filter id="cf14s_3-noise" x="0" y="0" width="100%" height="100%">
+    <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" stitchTiles="stitch" result="n"/>
+    <feColorMatrix in="n" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.6 0"/>
+  </filter></defs>
+  <rect x="0.6" y="0.6" width="88.8" height="124.8" rx="12" fill="#f6f1e7" stroke="#0000001f" stroke-width="1"/>
+  <g class="card-center"><path class="suit suit-s" d="M50 8 C64 30 92 44 92 62 C92 75 82 83 72 83 C65 83 58 79 55 73 C56 81 59 89 67 93 L33 93 C41 89 44 81 45 73 C42 79 35 83 28 83 C18 83 8 75 8 62 C8 44 36 30 50 8 Z" fill="#101418" transform="translate(22 40) scale(0.46)"/></g>
+  <g class="corner-index">
+    <text x="11" y="20" text-anchor="middle" font-family="Georgia,'Times New Roman',serif" font-weight="700" font-size="16" fill="#101418">A</text>
+    <path class="suit suit-s" d="M50 8 C64 30 92 44 92 62 C92 75 82 83 72 83 C65 83 58 79 55 73 C56 81 59 89 67 93 L33 93 C41 89 44 81 45 73 C42 79 35 83 28 83 C18 83 8 75 8 62 C8 44 36 30 50 8 Z" fill="#101418" transform="translate(5.5 25.5) scale(0.11)"/>
+  </g>
+  <g transform="rotate(180 45 63)"><g class="corner-index">
+    <text x="11" y="20" text-anchor="middle" font-family="Georgia,'Times New Roman',serif" font-weight="700" font-size="16" fill="#101418">A</text>
+    <path class="suit suit-s" d="M50 8 C64 30 92 44 92 62 C92 75 82 83 72 83 C65 83 58 79 55 73 C56 81 59 89 67 93 L33 93 C41 89 44 81 45 73 C42 79 35 83 28 83 C18 83 8 75 8 62 C8 44 36 30 50 8 Z" fill="#101418" transform="translate(5.5 25.5) scale(0.11)"/>
+  </g></g>
+  <rect x="0.6" y="0.6" width="88.8" height="124.8" rx="12" fill="url(#cf14s_3-noise)" opacity="0.05"/>
+</svg><svg class="playing-card" data-card="Qs" width="48" height="67" viewBox="0 0 90 126" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Q of s">
+  <defs><filter id="cf12s_4-noise" x="0" y="0" width="100%" height="100%">
+    <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" stitchTiles="stitch" result="n"/>
+    <feColorMatrix in="n" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.6 0"/>
+  </filter></defs>
+  <rect x="0.6" y="0.6" width="88.8" height="124.8" rx="12" fill="#f6f1e7" stroke="#0000001f" stroke-width="1"/>
+  <g class="card-center"><g class="court">
+    <rect x="20" y="26" width="50" height="74" rx="6" fill="none" stroke="#d4af37" stroke-width="1.6"/>
+    <rect x="24" y="30" width="42" height="66" rx="4" fill="none" stroke="#101418" stroke-width="1" opacity="0.55"/>
+    <path class="suit suit-s" d="M50 8 C64 30 92 44 92 62 C92 75 82 83 72 83 C65 83 58 79 55 73 C56 81 59 89 67 93 L33 93 C41 89 44 81 45 73 C42 79 35 83 28 83 C18 83 8 75 8 62 C8 44 36 30 50 8 Z" fill="#101418" transform="translate(36.5 32.5) scale(0.17)"/>
+    <text x="45" y="66" text-anchor="middle" dominant-baseline="central" font-family="Georgia,'Times New Roman',serif" font-weight="700" font-size="40" fill="#101418">Q</text>
+    <path class="suit suit-s" d="M50 8 C64 30 92 44 92 62 C92 75 82 83 72 83 C65 83 58 79 55 73 C56 81 59 89 67 93 L33 93 C41 89 44 81 45 73 C42 79 35 83 28 83 C18 83 8 75 8 62 C8 44 36 30 50 8 Z" fill="#101418" transform="translate(36.5 81.5) scale(0.17) rotate(180 50 50)"/>
+  </g></g>
+  <g class="corner-index">
+    <text x="11" y="20" text-anchor="middle" font-family="Georgia,'Times New Roman',serif" font-weight="700" font-size="16" fill="#101418">Q</text>
+    <path class="suit suit-s" d="M50 8 C64 30 92 44 92 62 C92 75 82 83 72 83 C65 83 58 79 55 73 C56 81 59 89 67 93 L33 93 C41 89 44 81 45 73 C42 79 35 83 28 83 C18 83 8 75 8 62 C8 44 36 30 50 8 Z" fill="#101418" transform="translate(5.5 25.5) scale(0.11)"/>
+  </g>
+  <g transform="rotate(180 45 63)"><g class="corner-index">
+    <text x="11" y="20" text-anchor="middle" font-family="Georgia,'Times New Roman',serif" font-weight="700" font-size="16" fill="#101418">Q</text>
+    <path class="suit suit-s" d="M50 8 C64 30 92 44 92 62 C92 75 82 83 72 83 C65 83 58 79 55 73 C56 81 59 89 67 93 L33 93 C41 89 44 81 45 73 C42 79 35 83 28 83 C18 83 8 75 8 62 C8 44 36 30 50 8 Z" fill="#101418" transform="translate(5.5 25.5) scale(0.11)"/>
+  </g></g>
+  <rect x="0.6" y="0.6" width="88.8" height="124.8" rx="12" fill="url(#cf12s_4-noise)" opacity="0.05"/>
+</svg></div></div><div class="abs " style="left:450px;top:537.6px"><div class="seat-plate hero active"><div class="seat-name">You</div><div class="seat-stack">4,200</div></div></div><div class="abs " style="left:450px;top:403.648px"><div class="commit"><div class="pile"><div class="pile-col"><div class="pile-stack" style="width:26px;height:30px"><div class="ch" style="bottom:0px"><svg class="chip chip-black" data-value="100" width="26" height="26" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="100 chip">
+  <defs>
+    <radialGradient id="chip100_11-sheen" cx="38%" cy="32%" r="78%">
+      <stop offset="0%" stop-color="#5b5d60"/>
+      <stop offset="60%" stop-color="#15181c"/>
+      <stop offset="100%" stop-color="#111417"/>
+    </radialGradient>
+    <filter id="chip100_11-shadow" x="-30%" y="-20%" width="160%" height="170%">
+      <feDropShadow dx="0" dy="3.2" stdDeviation="3" flood-color="#000" flood-opacity="0.45"/>
+    </filter>
+  </defs>
+  <g filter="url(#chip100_11-shadow)">
+    <circle cx="50" cy="53.5" r="46" fill="#0c0d0f"/>
+    <circle cx="50" cy="50" r="46" fill="url(#chip100_11-sheen)"/>
+    <g class="edge-spots"><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#d4af37" transform="rotate(0 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#d4af37" transform="rotate(45 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#d4af37" transform="rotate(90 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#d4af37" transform="rotate(135 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#d4af37" transform="rotate(180 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#d4af37" transform="rotate(225 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#d4af37" transform="rotate(270 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#d4af37" transform="rotate(315 50 50)"/></g>
+    <circle cx="50" cy="50" r="34.5" fill="none" stroke="#d4af37" stroke-width="2"/>
+    <circle cx="50" cy="50" r="30" fill="none" stroke="#d4af37" stroke-width="1" opacity="0.7"/>
+    <circle cx="50" cy="50" r="20.5" fill="#1f2429"/>
+    <circle cx="50" cy="50" r="20.5" fill="none" stroke="#181c20" stroke-width="0.8"/>
+    <text class="chip-mono" x="50" y="50.5" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif" font-weight="700" font-size="17" fill="#f6f1e7">100</text>
+  </g>
+</svg></div><div class="ch" style="bottom:4px"><svg class="chip chip-black" data-value="100" width="26" height="26" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="100 chip">
+  <defs>
+    <radialGradient id="chip100_12-sheen" cx="38%" cy="32%" r="78%">
+      <stop offset="0%" stop-color="#5b5d60"/>
+      <stop offset="60%" stop-color="#15181c"/>
+      <stop offset="100%" stop-color="#111417"/>
+    </radialGradient>
+    <filter id="chip100_12-shadow" x="-30%" y="-20%" width="160%" height="170%">
+      <feDropShadow dx="0" dy="3.2" stdDeviation="3" flood-color="#000" flood-opacity="0.45"/>
+    </filter>
+  </defs>
+  <g filter="url(#chip100_12-shadow)">
+    <circle cx="50" cy="53.5" r="46" fill="#0c0d0f"/>
+    <circle cx="50" cy="50" r="46" fill="url(#chip100_12-sheen)"/>
+    <g class="edge-spots"><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#d4af37" transform="rotate(0 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#d4af37" transform="rotate(45 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#d4af37" transform="rotate(90 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#d4af37" transform="rotate(135 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#d4af37" transform="rotate(180 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#d4af37" transform="rotate(225 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#d4af37" transform="rotate(270 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#d4af37" transform="rotate(315 50 50)"/></g>
+    <circle cx="50" cy="50" r="34.5" fill="none" stroke="#d4af37" stroke-width="2"/>
+    <circle cx="50" cy="50" r="30" fill="none" stroke="#d4af37" stroke-width="1" opacity="0.7"/>
+    <circle cx="50" cy="50" r="20.5" fill="#1f2429"/>
+    <circle cx="50" cy="50" r="20.5" fill="none" stroke="#181c20" stroke-width="0.8"/>
+    <text class="chip-mono" x="50" y="50.5" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif" font-weight="700" font-size="17" fill="#f6f1e7">100</text>
+  </g>
+</svg></div></div></div></div><div class="commit-x">200</div></div></div><div class="abs " style="left:150.3px;top:280.00000000000006px"><div class="hand"><svg class="playing-card card-back" data-card="back" width="48" height="67" viewBox="0 0 90 126" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="card back">
+  <defs>
+    <filter id="cb_5-noise" x="0" y="0" width="100%" height="100%">
+    <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" stitchTiles="stitch" result="n"/>
+    <feColorMatrix in="n" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.6 0"/>
+  </filter>
+    <clipPath id="cb_5-g"><rect x="6" y="6" width="78" height="114" rx="7"/></clipPath>
+    <radialGradient id="cb_5-ros" cx="50%" cy="50%" r="60%"><stop offset="0%" stop-color="#14543f"/><stop offset="100%" stop-color="#0b3d2e"/></radialGradient>
+  </defs>
+  <rect x="0.6" y="0.6" width="88.8" height="124.8" rx="12" fill="#0b3d2e"/>
+  <g clip-path="url(#cb_5-g)">
+    <rect x="6" y="6" width="78" height="114" fill="url(#cb_5-ros)"/>
+    <g class="guilloche"><line x1="-126" y1="0" x2="0" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-126" y1="126" x2="0" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-119" y1="0" x2="7" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-119" y1="126" x2="7" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-112" y1="0" x2="14" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-112" y1="126" x2="14" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-105" y1="0" x2="21" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-105" y1="126" x2="21" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-98" y1="0" x2="28" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-98" y1="126" x2="28" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-91" y1="0" x2="35" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-91" y1="126" x2="35" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-84" y1="0" x2="42" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-84" y1="126" x2="42" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-77" y1="0" x2="49" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-77" y1="126" x2="49" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-70" y1="0" x2="56" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-70" y1="126" x2="56" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-63" y1="0" x2="63" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-63" y1="126" x2="63" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-56" y1="0" x2="70" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-56" y1="126" x2="70" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-49" y1="0" x2="77" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-49" y1="126" x2="77" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-42" y1="0" x2="84" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-42" y1="126" x2="84" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-35" y1="0" x2="91" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-35" y1="126" x2="91" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-28" y1="0" x2="98" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-28" y1="126" x2="98" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-21" y1="0" x2="105" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-21" y1="126" x2="105" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-14" y1="0" x2="112" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-14" y1="126" x2="112" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-7" y1="0" x2="119" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-7" y1="126" x2="119" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="0" y1="0" x2="126" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="0" y1="126" x2="126" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="7" y1="0" x2="133" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="7" y1="126" x2="133" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="14" y1="0" x2="140" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="14" y1="126" x2="140" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="21" y1="0" x2="147" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="21" y1="126" x2="147" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="28" y1="0" x2="154" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="28" y1="126" x2="154" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="35" y1="0" x2="161" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="35" y1="126" x2="161" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="42" y1="0" x2="168" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="42" y1="126" x2="168" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="49" y1="0" x2="175" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="49" y1="126" x2="175" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="56" y1="0" x2="182" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="56" y1="126" x2="182" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="63" y1="0" x2="189" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="63" y1="126" x2="189" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="70" y1="0" x2="196" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="70" y1="126" x2="196" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="77" y1="0" x2="203" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="77" y1="126" x2="203" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="84" y1="0" x2="210" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="84" y1="126" x2="210" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><ellipse cx="45" cy="63" rx="30" ry="11" fill="none" stroke="#d4af37" stroke-width="0.5" opacity="0.5" transform="rotate(0 45 63)"/><ellipse cx="45" cy="63" rx="30" ry="11" fill="none" stroke="#d4af37" stroke-width="0.5" opacity="0.5" transform="rotate(18 45 63)"/><ellipse cx="45" cy="63" rx="30" ry="11" fill="none" stroke="#d4af37" stroke-width="0.5" opacity="0.5" transform="rotate(36 45 63)"/><ellipse cx="45" cy="63" rx="30" ry="11" fill="none" stroke="#d4af37" stroke-width="0.5" opacity="0.5" transform="rotate(54 45 63)"/><ellipse cx="45" cy="63" rx="30" ry="11" fill="none" stroke="#d4af37" stroke-width="0.5" opacity="0.5" transform="rotate(72 45 63)"/><ellipse cx="45" cy="63" rx="30" ry="11" fill="none" stroke="#d4af37" stroke-width="0.5" opacity="0.5" transform="rotate(90 45 63)"/><ellipse cx="45" cy="63" rx="30" ry="11" fill="none" stroke="#d4af37" stroke-width="0.5" opacity="0.5" transform="rotate(108 45 63)"/><ellipse cx="45" cy="63" rx="30" ry="11" fill="none" stroke="#d4af37" stroke-width="0.5" opacity="0.5" transform="rotate(126 45 63)"/><ellipse cx="45" cy="63" rx="30" ry="11" fill="none" stroke="#d4af37" stroke-width="0.5" opacity="0.5" transform="rotate(144 45 63)"/><ellipse cx="45" cy="63" rx="30" ry="11" fill="none" stroke="#d4af37" stroke-width="0.5" opacity="0.5" transform="rotate(162 45 63)"/></g>
+  </g>
+  <rect x="4.5" y="4.5" width="81" height="117" rx="8" fill="none" stroke="#d4af37" stroke-width="1.4"/>
+  <rect x="8" y="8" width="74" height="110" rx="6" fill="none" stroke="#d4af37" stroke-width="0.7" opacity="0.7"/>
+  <g class="emblem">
+    <circle cx="45" cy="63" r="15" fill="#0b3d2e" stroke="#d4af37" stroke-width="1"/>
+    <path d="M45 52 L54 63 L45 74 L36 63 Z" fill="none" stroke="#d4af37" stroke-width="1"/>
+    <text x="45" y="63.5" text-anchor="middle" dominant-baseline="central" font-family="Georgia,'Times New Roman',serif" font-weight="700" font-size="11" fill="#d4af37">A</text>
+  </g>
+  <rect x="0.6" y="0.6" width="88.8" height="124.8" rx="12" fill="url(#cb_5-noise)" opacity="0.05"/>
+</svg><svg class="playing-card card-back" data-card="back" width="48" height="67" viewBox="0 0 90 126" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="card back">
+  <defs>
+    <filter id="cb_6-noise" x="0" y="0" width="100%" height="100%">
+    <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" stitchTiles="stitch" result="n"/>
+    <feColorMatrix in="n" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.6 0"/>
+  </filter>
+    <clipPath id="cb_6-g"><rect x="6" y="6" width="78" height="114" rx="7"/></clipPath>
+    <radialGradient id="cb_6-ros" cx="50%" cy="50%" r="60%"><stop offset="0%" stop-color="#14543f"/><stop offset="100%" stop-color="#0b3d2e"/></radialGradient>
+  </defs>
+  <rect x="0.6" y="0.6" width="88.8" height="124.8" rx="12" fill="#0b3d2e"/>
+  <g clip-path="url(#cb_6-g)">
+    <rect x="6" y="6" width="78" height="114" fill="url(#cb_6-ros)"/>
+    <g class="guilloche"><line x1="-126" y1="0" x2="0" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-126" y1="126" x2="0" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-119" y1="0" x2="7" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-119" y1="126" x2="7" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-112" y1="0" x2="14" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-112" y1="126" x2="14" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-105" y1="0" x2="21" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-105" y1="126" x2="21" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-98" y1="0" x2="28" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-98" y1="126" x2="28" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-91" y1="0" x2="35" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-91" y1="126" x2="35" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-84" y1="0" x2="42" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-84" y1="126" x2="42" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-77" y1="0" x2="49" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-77" y1="126" x2="49" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-70" y1="0" x2="56" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-70" y1="126" x2="56" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-63" y1="0" x2="63" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-63" y1="126" x2="63" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-56" y1="0" x2="70" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-56" y1="126" x2="70" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-49" y1="0" x2="77" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-49" y1="126" x2="77" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-42" y1="0" x2="84" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-42" y1="126" x2="84" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-35" y1="0" x2="91" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-35" y1="126" x2="91" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-28" y1="0" x2="98" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-28" y1="126" x2="98" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-21" y1="0" x2="105" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-21" y1="126" x2="105" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-14" y1="0" x2="112" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-14" y1="126" x2="112" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-7" y1="0" x2="119" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-7" y1="126" x2="119" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="0" y1="0" x2="126" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="0" y1="126" x2="126" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="7" y1="0" x2="133" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="7" y1="126" x2="133" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="14" y1="0" x2="140" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="14" y1="126" x2="140" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="21" y1="0" x2="147" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="21" y1="126" x2="147" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="28" y1="0" x2="154" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="28" y1="126" x2="154" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="35" y1="0" x2="161" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="35" y1="126" x2="161" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="42" y1="0" x2="168" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="42" y1="126" x2="168" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="49" y1="0" x2="175" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="49" y1="126" x2="175" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="56" y1="0" x2="182" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="56" y1="126" x2="182" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="63" y1="0" x2="189" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="63" y1="126" x2="189" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="70" y1="0" x2="196" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="70" y1="126" x2="196" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="77" y1="0" x2="203" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="77" y1="126" x2="203" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="84" y1="0" x2="210" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="84" y1="126" x2="210" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><ellipse cx="45" cy="63" rx="30" ry="11" fill="none" stroke="#d4af37" stroke-width="0.5" opacity="0.5" transform="rotate(0 45 63)"/><ellipse cx="45" cy="63" rx="30" ry="11" fill="none" stroke="#d4af37" stroke-width="0.5" opacity="0.5" transform="rotate(18 45 63)"/><ellipse cx="45" cy="63" rx="30" ry="11" fill="none" stroke="#d4af37" stroke-width="0.5" opacity="0.5" transform="rotate(36 45 63)"/><ellipse cx="45" cy="63" rx="30" ry="11" fill="none" stroke="#d4af37" stroke-width="0.5" opacity="0.5" transform="rotate(54 45 63)"/><ellipse cx="45" cy="63" rx="30" ry="11" fill="none" stroke="#d4af37" stroke-width="0.5" opacity="0.5" transform="rotate(72 45 63)"/><ellipse cx="45" cy="63" rx="30" ry="11" fill="none" stroke="#d4af37" stroke-width="0.5" opacity="0.5" transform="rotate(90 45 63)"/><ellipse cx="45" cy="63" rx="30" ry="11" fill="none" stroke="#d4af37" stroke-width="0.5" opacity="0.5" transform="rotate(108 45 63)"/><ellipse cx="45" cy="63" rx="30" ry="11" fill="none" stroke="#d4af37" stroke-width="0.5" opacity="0.5" transform="rotate(126 45 63)"/><ellipse cx="45" cy="63" rx="30" ry="11" fill="none" stroke="#d4af37" stroke-width="0.5" opacity="0.5" transform="rotate(144 45 63)"/><ellipse cx="45" cy="63" rx="30" ry="11" fill="none" stroke="#d4af37" stroke-width="0.5" opacity="0.5" transform="rotate(162 45 63)"/></g>
+  </g>
+  <rect x="4.5" y="4.5" width="81" height="117" rx="8" fill="none" stroke="#d4af37" stroke-width="1.4"/>
+  <rect x="8" y="8" width="74" height="110" rx="6" fill="none" stroke="#d4af37" stroke-width="0.7" opacity="0.7"/>
+  <g class="emblem">
+    <circle cx="45" cy="63" r="15" fill="#0b3d2e" stroke="#d4af37" stroke-width="1"/>
+    <path d="M45 52 L54 63 L45 74 L36 63 Z" fill="none" stroke="#d4af37" stroke-width="1"/>
+    <text x="45" y="63.5" text-anchor="middle" dominant-baseline="central" font-family="Georgia,'Times New Roman',serif" font-weight="700" font-size="11" fill="#d4af37">A</text>
+  </g>
+  <rect x="0.6" y="0.6" width="88.8" height="124.8" rx="12" fill="url(#cb_6-noise)" opacity="0.05"/>
+</svg></div></div><div class="abs " style="left:45px;top:280.00000000000006px"><div class="seat-plate"><div class="seat-name">Rock</div><div class="seat-stack">3,800</div></div></div><div class="abs " style="left:255.6px;top:280px"><div class="commit"><div class="pile"><div class="pile-col"><div class="pile-stack" style="width:26px;height:30px"><div class="ch" style="bottom:0px"><svg class="chip chip-black" data-value="100" width="26" height="26" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="100 chip">
+  <defs>
+    <radialGradient id="chip100_13-sheen" cx="38%" cy="32%" r="78%">
+      <stop offset="0%" stop-color="#5b5d60"/>
+      <stop offset="60%" stop-color="#15181c"/>
+      <stop offset="100%" stop-color="#111417"/>
+    </radialGradient>
+    <filter id="chip100_13-shadow" x="-30%" y="-20%" width="160%" height="170%">
+      <feDropShadow dx="0" dy="3.2" stdDeviation="3" flood-color="#000" flood-opacity="0.45"/>
+    </filter>
+  </defs>
+  <g filter="url(#chip100_13-shadow)">
+    <circle cx="50" cy="53.5" r="46" fill="#0c0d0f"/>
+    <circle cx="50" cy="50" r="46" fill="url(#chip100_13-sheen)"/>
+    <g class="edge-spots"><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#d4af37" transform="rotate(0 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#d4af37" transform="rotate(45 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#d4af37" transform="rotate(90 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#d4af37" transform="rotate(135 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#d4af37" transform="rotate(180 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#d4af37" transform="rotate(225 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#d4af37" transform="rotate(270 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#d4af37" transform="rotate(315 50 50)"/></g>
+    <circle cx="50" cy="50" r="34.5" fill="none" stroke="#d4af37" stroke-width="2"/>
+    <circle cx="50" cy="50" r="30" fill="none" stroke="#d4af37" stroke-width="1" opacity="0.7"/>
+    <circle cx="50" cy="50" r="20.5" fill="#1f2429"/>
+    <circle cx="50" cy="50" r="20.5" fill="none" stroke="#181c20" stroke-width="0.8"/>
+    <text class="chip-mono" x="50" y="50.5" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif" font-weight="700" font-size="17" fill="#f6f1e7">100</text>
+  </g>
+</svg></div><div class="ch" style="bottom:4px"><svg class="chip chip-black" data-value="100" width="26" height="26" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="100 chip">
+  <defs>
+    <radialGradient id="chip100_14-sheen" cx="38%" cy="32%" r="78%">
+      <stop offset="0%" stop-color="#5b5d60"/>
+      <stop offset="60%" stop-color="#15181c"/>
+      <stop offset="100%" stop-color="#111417"/>
+    </radialGradient>
+    <filter id="chip100_14-shadow" x="-30%" y="-20%" width="160%" height="170%">
+      <feDropShadow dx="0" dy="3.2" stdDeviation="3" flood-color="#000" flood-opacity="0.45"/>
+    </filter>
+  </defs>
+  <g filter="url(#chip100_14-shadow)">
+    <circle cx="50" cy="53.5" r="46" fill="#0c0d0f"/>
+    <circle cx="50" cy="50" r="46" fill="url(#chip100_14-sheen)"/>
+    <g class="edge-spots"><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#d4af37" transform="rotate(0 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#d4af37" transform="rotate(45 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#d4af37" transform="rotate(90 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#d4af37" transform="rotate(135 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#d4af37" transform="rotate(180 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#d4af37" transform="rotate(225 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#d4af37" transform="rotate(270 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#d4af37" transform="rotate(315 50 50)"/></g>
+    <circle cx="50" cy="50" r="34.5" fill="none" stroke="#d4af37" stroke-width="2"/>
+    <circle cx="50" cy="50" r="30" fill="none" stroke="#d4af37" stroke-width="1" opacity="0.7"/>
+    <circle cx="50" cy="50" r="20.5" fill="#1f2429"/>
+    <circle cx="50" cy="50" r="20.5" fill="none" stroke="#181c20" stroke-width="0.8"/>
+    <text class="chip-mono" x="50" y="50.5" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif" font-weight="700" font-size="17" fill="#f6f1e7">100</text>
+  </g>
+</svg></div></div></div></div><div class="commit-x">200</div></div></div><div class="abs " style="left:449.99999999999994px;top:89.37599999999999px"><div class="hand"><svg class="playing-card card-back" data-card="back" width="48" height="67" viewBox="0 0 90 126" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="card back">
+  <defs>
+    <filter id="cb_7-noise" x="0" y="0" width="100%" height="100%">
+    <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" stitchTiles="stitch" result="n"/>
+    <feColorMatrix in="n" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.6 0"/>
+  </filter>
+    <clipPath id="cb_7-g"><rect x="6" y="6" width="78" height="114" rx="7"/></clipPath>
+    <radialGradient id="cb_7-ros" cx="50%" cy="50%" r="60%"><stop offset="0%" stop-color="#14543f"/><stop offset="100%" stop-color="#0b3d2e"/></radialGradient>
+  </defs>
+  <rect x="0.6" y="0.6" width="88.8" height="124.8" rx="12" fill="#0b3d2e"/>
+  <g clip-path="url(#cb_7-g)">
+    <rect x="6" y="6" width="78" height="114" fill="url(#cb_7-ros)"/>
+    <g class="guilloche"><line x1="-126" y1="0" x2="0" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-126" y1="126" x2="0" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-119" y1="0" x2="7" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-119" y1="126" x2="7" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-112" y1="0" x2="14" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-112" y1="126" x2="14" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-105" y1="0" x2="21" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-105" y1="126" x2="21" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-98" y1="0" x2="28" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-98" y1="126" x2="28" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-91" y1="0" x2="35" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-91" y1="126" x2="35" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-84" y1="0" x2="42" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-84" y1="126" x2="42" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-77" y1="0" x2="49" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-77" y1="126" x2="49" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-70" y1="0" x2="56" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-70" y1="126" x2="56" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-63" y1="0" x2="63" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-63" y1="126" x2="63" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-56" y1="0" x2="70" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-56" y1="126" x2="70" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-49" y1="0" x2="77" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-49" y1="126" x2="77" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-42" y1="0" x2="84" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-42" y1="126" x2="84" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-35" y1="0" x2="91" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-35" y1="126" x2="91" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-28" y1="0" x2="98" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-28" y1="126" x2="98" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-21" y1="0" x2="105" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-21" y1="126" x2="105" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-14" y1="0" x2="112" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-14" y1="126" x2="112" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-7" y1="0" x2="119" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-7" y1="126" x2="119" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="0" y1="0" x2="126" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="0" y1="126" x2="126" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="7" y1="0" x2="133" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="7" y1="126" x2="133" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="14" y1="0" x2="140" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="14" y1="126" x2="140" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="21" y1="0" x2="147" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="21" y1="126" x2="147" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="28" y1="0" x2="154" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="28" y1="126" x2="154" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="35" y1="0" x2="161" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="35" y1="126" x2="161" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="42" y1="0" x2="168" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="42" y1="126" x2="168" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="49" y1="0" x2="175" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="49" y1="126" x2="175" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="56" y1="0" x2="182" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="56" y1="126" x2="182" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="63" y1="0" x2="189" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="63" y1="126" x2="189" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="70" y1="0" x2="196" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="70" y1="126" x2="196" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="77" y1="0" x2="203" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="77" y1="126" x2="203" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="84" y1="0" x2="210" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="84" y1="126" x2="210" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><ellipse cx="45" cy="63" rx="30" ry="11" fill="none" stroke="#d4af37" stroke-width="0.5" opacity="0.5" transform="rotate(0 45 63)"/><ellipse cx="45" cy="63" rx="30" ry="11" fill="none" stroke="#d4af37" stroke-width="0.5" opacity="0.5" transform="rotate(18 45 63)"/><ellipse cx="45" cy="63" rx="30" ry="11" fill="none" stroke="#d4af37" stroke-width="0.5" opacity="0.5" transform="rotate(36 45 63)"/><ellipse cx="45" cy="63" rx="30" ry="11" fill="none" stroke="#d4af37" stroke-width="0.5" opacity="0.5" transform="rotate(54 45 63)"/><ellipse cx="45" cy="63" rx="30" ry="11" fill="none" stroke="#d4af37" stroke-width="0.5" opacity="0.5" transform="rotate(72 45 63)"/><ellipse cx="45" cy="63" rx="30" ry="11" fill="none" stroke="#d4af37" stroke-width="0.5" opacity="0.5" transform="rotate(90 45 63)"/><ellipse cx="45" cy="63" rx="30" ry="11" fill="none" stroke="#d4af37" stroke-width="0.5" opacity="0.5" transform="rotate(108 45 63)"/><ellipse cx="45" cy="63" rx="30" ry="11" fill="none" stroke="#d4af37" stroke-width="0.5" opacity="0.5" transform="rotate(126 45 63)"/><ellipse cx="45" cy="63" rx="30" ry="11" fill="none" stroke="#d4af37" stroke-width="0.5" opacity="0.5" transform="rotate(144 45 63)"/><ellipse cx="45" cy="63" rx="30" ry="11" fill="none" stroke="#d4af37" stroke-width="0.5" opacity="0.5" transform="rotate(162 45 63)"/></g>
+  </g>
+  <rect x="4.5" y="4.5" width="81" height="117" rx="8" fill="none" stroke="#d4af37" stroke-width="1.4"/>
+  <rect x="8" y="8" width="74" height="110" rx="6" fill="none" stroke="#d4af37" stroke-width="0.7" opacity="0.7"/>
+  <g class="emblem">
+    <circle cx="45" cy="63" r="15" fill="#0b3d2e" stroke="#d4af37" stroke-width="1"/>
+    <path d="M45 52 L54 63 L45 74 L36 63 Z" fill="none" stroke="#d4af37" stroke-width="1"/>
+    <text x="45" y="63.5" text-anchor="middle" dominant-baseline="central" font-family="Georgia,'Times New Roman',serif" font-weight="700" font-size="11" fill="#d4af37">A</text>
+  </g>
+  <rect x="0.6" y="0.6" width="88.8" height="124.8" rx="12" fill="url(#cb_7-noise)" opacity="0.05"/>
+</svg><svg class="playing-card card-back" data-card="back" width="48" height="67" viewBox="0 0 90 126" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="card back">
+  <defs>
+    <filter id="cb_8-noise" x="0" y="0" width="100%" height="100%">
+    <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" stitchTiles="stitch" result="n"/>
+    <feColorMatrix in="n" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.6 0"/>
+  </filter>
+    <clipPath id="cb_8-g"><rect x="6" y="6" width="78" height="114" rx="7"/></clipPath>
+    <radialGradient id="cb_8-ros" cx="50%" cy="50%" r="60%"><stop offset="0%" stop-color="#14543f"/><stop offset="100%" stop-color="#0b3d2e"/></radialGradient>
+  </defs>
+  <rect x="0.6" y="0.6" width="88.8" height="124.8" rx="12" fill="#0b3d2e"/>
+  <g clip-path="url(#cb_8-g)">
+    <rect x="6" y="6" width="78" height="114" fill="url(#cb_8-ros)"/>
+    <g class="guilloche"><line x1="-126" y1="0" x2="0" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-126" y1="126" x2="0" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-119" y1="0" x2="7" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-119" y1="126" x2="7" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-112" y1="0" x2="14" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-112" y1="126" x2="14" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-105" y1="0" x2="21" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-105" y1="126" x2="21" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-98" y1="0" x2="28" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-98" y1="126" x2="28" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-91" y1="0" x2="35" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-91" y1="126" x2="35" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-84" y1="0" x2="42" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-84" y1="126" x2="42" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-77" y1="0" x2="49" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-77" y1="126" x2="49" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-70" y1="0" x2="56" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-70" y1="126" x2="56" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-63" y1="0" x2="63" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-63" y1="126" x2="63" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-56" y1="0" x2="70" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-56" y1="126" x2="70" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-49" y1="0" x2="77" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-49" y1="126" x2="77" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-42" y1="0" x2="84" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-42" y1="126" x2="84" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-35" y1="0" x2="91" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-35" y1="126" x2="91" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-28" y1="0" x2="98" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-28" y1="126" x2="98" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-21" y1="0" x2="105" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-21" y1="126" x2="105" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-14" y1="0" x2="112" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-14" y1="126" x2="112" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-7" y1="0" x2="119" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-7" y1="126" x2="119" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="0" y1="0" x2="126" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="0" y1="126" x2="126" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="7" y1="0" x2="133" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="7" y1="126" x2="133" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="14" y1="0" x2="140" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="14" y1="126" x2="140" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="21" y1="0" x2="147" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="21" y1="126" x2="147" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="28" y1="0" x2="154" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="28" y1="126" x2="154" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="35" y1="0" x2="161" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="35" y1="126" x2="161" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="42" y1="0" x2="168" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="42" y1="126" x2="168" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="49" y1="0" x2="175" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="49" y1="126" x2="175" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="56" y1="0" x2="182" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="56" y1="126" x2="182" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="63" y1="0" x2="189" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="63" y1="126" x2="189" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="70" y1="0" x2="196" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="70" y1="126" x2="196" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="77" y1="0" x2="203" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="77" y1="126" x2="203" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="84" y1="0" x2="210" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="84" y1="126" x2="210" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><ellipse cx="45" cy="63" rx="30" ry="11" fill="none" stroke="#d4af37" stroke-width="0.5" opacity="0.5" transform="rotate(0 45 63)"/><ellipse cx="45" cy="63" rx="30" ry="11" fill="none" stroke="#d4af37" stroke-width="0.5" opacity="0.5" transform="rotate(18 45 63)"/><ellipse cx="45" cy="63" rx="30" ry="11" fill="none" stroke="#d4af37" stroke-width="0.5" opacity="0.5" transform="rotate(36 45 63)"/><ellipse cx="45" cy="63" rx="30" ry="11" fill="none" stroke="#d4af37" stroke-width="0.5" opacity="0.5" transform="rotate(54 45 63)"/><ellipse cx="45" cy="63" rx="30" ry="11" fill="none" stroke="#d4af37" stroke-width="0.5" opacity="0.5" transform="rotate(72 45 63)"/><ellipse cx="45" cy="63" rx="30" ry="11" fill="none" stroke="#d4af37" stroke-width="0.5" opacity="0.5" transform="rotate(90 45 63)"/><ellipse cx="45" cy="63" rx="30" ry="11" fill="none" stroke="#d4af37" stroke-width="0.5" opacity="0.5" transform="rotate(108 45 63)"/><ellipse cx="45" cy="63" rx="30" ry="11" fill="none" stroke="#d4af37" stroke-width="0.5" opacity="0.5" transform="rotate(126 45 63)"/><ellipse cx="45" cy="63" rx="30" ry="11" fill="none" stroke="#d4af37" stroke-width="0.5" opacity="0.5" transform="rotate(144 45 63)"/><ellipse cx="45" cy="63" rx="30" ry="11" fill="none" stroke="#d4af37" stroke-width="0.5" opacity="0.5" transform="rotate(162 45 63)"/></g>
+  </g>
+  <rect x="4.5" y="4.5" width="81" height="117" rx="8" fill="none" stroke="#d4af37" stroke-width="1.4"/>
+  <rect x="8" y="8" width="74" height="110" rx="6" fill="none" stroke="#d4af37" stroke-width="0.7" opacity="0.7"/>
+  <g class="emblem">
+    <circle cx="45" cy="63" r="15" fill="#0b3d2e" stroke="#d4af37" stroke-width="1"/>
+    <path d="M45 52 L54 63 L45 74 L36 63 Z" fill="none" stroke="#d4af37" stroke-width="1"/>
+    <text x="45" y="63.5" text-anchor="middle" dominant-baseline="central" font-family="Georgia,'Times New Roman',serif" font-weight="700" font-size="11" fill="#d4af37">A</text>
+  </g>
+  <rect x="0.6" y="0.6" width="88.8" height="124.8" rx="12" fill="url(#cb_8-noise)" opacity="0.05"/>
+</svg></div></div><div class="abs " style="left:449.99999999999994px;top:22.399999999999977px"><div class="seat-plate allin"><div class="seat-name">Maniac</div><div class="seat-stack">0</div></div></div><div class="abs " style="left:450px;top:156.352px"><div class="commit"><div class="pile"><div class="pile-col"><div class="pile-stack" style="width:26px;height:26px"><div class="ch" style="bottom:0px"><svg class="chip chip-gold" data-value="1000" width="26" height="26" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="1000 chip">
+  <defs>
+    <radialGradient id="chip1000_15-sheen" cx="38%" cy="32%" r="78%">
+      <stop offset="0%" stop-color="#d9bd75"/>
+      <stop offset="60%" stop-color="#c8a13a"/>
+      <stop offset="100%" stop-color="#a48430"/>
+    </radialGradient>
+    <filter id="chip1000_15-shadow" x="-30%" y="-20%" width="160%" height="170%">
+      <feDropShadow dx="0" dy="3.2" stdDeviation="3" flood-color="#000" flood-opacity="0.45"/>
+    </filter>
+  </defs>
+  <g filter="url(#chip1000_15-shadow)">
+    <circle cx="50" cy="53.5" r="46" fill="#6e5920"/>
+    <circle cx="50" cy="50" r="46" fill="url(#chip1000_15-sheen)"/>
+    <g class="edge-spots"><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#3a2c10" transform="rotate(0 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#3a2c10" transform="rotate(45 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#3a2c10" transform="rotate(90 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#3a2c10" transform="rotate(135 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#3a2c10" transform="rotate(180 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#3a2c10" transform="rotate(225 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#3a2c10" transform="rotate(270 50 50)"/><rect class="edge-spot" x="46.4" y="3.4" width="7.2" height="13" rx="3.2" fill="#3a2c10" transform="rotate(315 50 50)"/></g>
+    <circle cx="50" cy="50" r="34.5" fill="none" stroke="#f1d98a" stroke-width="2"/>
+    <circle cx="50" cy="50" r="30" fill="none" stroke="#f1d98a" stroke-width="1" opacity="0.7"/>
+    <circle cx="50" cy="50" r="20.5" fill="#f1d98a"/>
+    <circle cx="50" cy="50" r="20.5" fill="none" stroke="#bca96c" stroke-width="0.8"/>
+    <text class="chip-mono" x="50" y="50.5" text-anchor="middle" dominant-baseline="central" font-family="Georgia, 'Times New Roman', serif" font-weight="700" font-size="22" fill="#2a2008">1K</text>
+  </g>
+</svg></div></div></div></div><div class="commit-x">1,000</div></div></div><div class="abs muck" style="left:749.7px;top:279.99999999999994px"><div class="hand"><svg class="playing-card card-back" data-card="back" width="48" height="67" viewBox="0 0 90 126" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="card back">
+  <defs>
+    <filter id="cb_9-noise" x="0" y="0" width="100%" height="100%">
+    <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" stitchTiles="stitch" result="n"/>
+    <feColorMatrix in="n" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.6 0"/>
+  </filter>
+    <clipPath id="cb_9-g"><rect x="6" y="6" width="78" height="114" rx="7"/></clipPath>
+    <radialGradient id="cb_9-ros" cx="50%" cy="50%" r="60%"><stop offset="0%" stop-color="#14543f"/><stop offset="100%" stop-color="#0b3d2e"/></radialGradient>
+  </defs>
+  <rect x="0.6" y="0.6" width="88.8" height="124.8" rx="12" fill="#0b3d2e"/>
+  <g clip-path="url(#cb_9-g)">
+    <rect x="6" y="6" width="78" height="114" fill="url(#cb_9-ros)"/>
+    <g class="guilloche"><line x1="-126" y1="0" x2="0" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-126" y1="126" x2="0" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-119" y1="0" x2="7" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-119" y1="126" x2="7" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-112" y1="0" x2="14" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-112" y1="126" x2="14" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-105" y1="0" x2="21" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-105" y1="126" x2="21" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-98" y1="0" x2="28" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-98" y1="126" x2="28" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-91" y1="0" x2="35" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-91" y1="126" x2="35" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-84" y1="0" x2="42" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-84" y1="126" x2="42" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-77" y1="0" x2="49" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-77" y1="126" x2="49" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-70" y1="0" x2="56" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-70" y1="126" x2="56" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-63" y1="0" x2="63" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-63" y1="126" x2="63" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-56" y1="0" x2="70" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-56" y1="126" x2="70" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-49" y1="0" x2="77" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-49" y1="126" x2="77" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-42" y1="0" x2="84" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-42" y1="126" x2="84" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-35" y1="0" x2="91" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-35" y1="126" x2="91" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-28" y1="0" x2="98" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-28" y1="126" x2="98" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-21" y1="0" x2="105" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-21" y1="126" x2="105" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-14" y1="0" x2="112" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-14" y1="126" x2="112" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-7" y1="0" x2="119" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-7" y1="126" x2="119" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="0" y1="0" x2="126" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="0" y1="126" x2="126" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="7" y1="0" x2="133" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="7" y1="126" x2="133" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="14" y1="0" x2="140" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="14" y1="126" x2="140" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="21" y1="0" x2="147" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="21" y1="126" x2="147" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="28" y1="0" x2="154" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="28" y1="126" x2="154" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="35" y1="0" x2="161" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="35" y1="126" x2="161" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="42" y1="0" x2="168" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="42" y1="126" x2="168" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="49" y1="0" x2="175" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="49" y1="126" x2="175" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="56" y1="0" x2="182" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="56" y1="126" x2="182" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="63" y1="0" x2="189" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="63" y1="126" x2="189" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="70" y1="0" x2="196" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="70" y1="126" x2="196" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="77" y1="0" x2="203" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="77" y1="126" x2="203" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="84" y1="0" x2="210" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="84" y1="126" x2="210" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><ellipse cx="45" cy="63" rx="30" ry="11" fill="none" stroke="#d4af37" stroke-width="0.5" opacity="0.5" transform="rotate(0 45 63)"/><ellipse cx="45" cy="63" rx="30" ry="11" fill="none" stroke="#d4af37" stroke-width="0.5" opacity="0.5" transform="rotate(18 45 63)"/><ellipse cx="45" cy="63" rx="30" ry="11" fill="none" stroke="#d4af37" stroke-width="0.5" opacity="0.5" transform="rotate(36 45 63)"/><ellipse cx="45" cy="63" rx="30" ry="11" fill="none" stroke="#d4af37" stroke-width="0.5" opacity="0.5" transform="rotate(54 45 63)"/><ellipse cx="45" cy="63" rx="30" ry="11" fill="none" stroke="#d4af37" stroke-width="0.5" opacity="0.5" transform="rotate(72 45 63)"/><ellipse cx="45" cy="63" rx="30" ry="11" fill="none" stroke="#d4af37" stroke-width="0.5" opacity="0.5" transform="rotate(90 45 63)"/><ellipse cx="45" cy="63" rx="30" ry="11" fill="none" stroke="#d4af37" stroke-width="0.5" opacity="0.5" transform="rotate(108 45 63)"/><ellipse cx="45" cy="63" rx="30" ry="11" fill="none" stroke="#d4af37" stroke-width="0.5" opacity="0.5" transform="rotate(126 45 63)"/><ellipse cx="45" cy="63" rx="30" ry="11" fill="none" stroke="#d4af37" stroke-width="0.5" opacity="0.5" transform="rotate(144 45 63)"/><ellipse cx="45" cy="63" rx="30" ry="11" fill="none" stroke="#d4af37" stroke-width="0.5" opacity="0.5" transform="rotate(162 45 63)"/></g>
+  </g>
+  <rect x="4.5" y="4.5" width="81" height="117" rx="8" fill="none" stroke="#d4af37" stroke-width="1.4"/>
+  <rect x="8" y="8" width="74" height="110" rx="6" fill="none" stroke="#d4af37" stroke-width="0.7" opacity="0.7"/>
+  <g class="emblem">
+    <circle cx="45" cy="63" r="15" fill="#0b3d2e" stroke="#d4af37" stroke-width="1"/>
+    <path d="M45 52 L54 63 L45 74 L36 63 Z" fill="none" stroke="#d4af37" stroke-width="1"/>
+    <text x="45" y="63.5" text-anchor="middle" dominant-baseline="central" font-family="Georgia,'Times New Roman',serif" font-weight="700" font-size="11" fill="#d4af37">A</text>
+  </g>
+  <rect x="0.6" y="0.6" width="88.8" height="124.8" rx="12" fill="url(#cb_9-noise)" opacity="0.05"/>
+</svg><svg class="playing-card card-back" data-card="back" width="48" height="67" viewBox="0 0 90 126" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="card back">
+  <defs>
+    <filter id="cb_10-noise" x="0" y="0" width="100%" height="100%">
+    <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" stitchTiles="stitch" result="n"/>
+    <feColorMatrix in="n" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.6 0"/>
+  </filter>
+    <clipPath id="cb_10-g"><rect x="6" y="6" width="78" height="114" rx="7"/></clipPath>
+    <radialGradient id="cb_10-ros" cx="50%" cy="50%" r="60%"><stop offset="0%" stop-color="#14543f"/><stop offset="100%" stop-color="#0b3d2e"/></radialGradient>
+  </defs>
+  <rect x="0.6" y="0.6" width="88.8" height="124.8" rx="12" fill="#0b3d2e"/>
+  <g clip-path="url(#cb_10-g)">
+    <rect x="6" y="6" width="78" height="114" fill="url(#cb_10-ros)"/>
+    <g class="guilloche"><line x1="-126" y1="0" x2="0" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-126" y1="126" x2="0" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-119" y1="0" x2="7" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-119" y1="126" x2="7" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-112" y1="0" x2="14" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-112" y1="126" x2="14" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-105" y1="0" x2="21" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-105" y1="126" x2="21" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-98" y1="0" x2="28" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-98" y1="126" x2="28" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-91" y1="0" x2="35" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-91" y1="126" x2="35" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-84" y1="0" x2="42" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-84" y1="126" x2="42" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-77" y1="0" x2="49" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-77" y1="126" x2="49" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-70" y1="0" x2="56" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-70" y1="126" x2="56" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-63" y1="0" x2="63" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-63" y1="126" x2="63" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-56" y1="0" x2="70" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-56" y1="126" x2="70" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-49" y1="0" x2="77" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-49" y1="126" x2="77" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-42" y1="0" x2="84" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-42" y1="126" x2="84" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-35" y1="0" x2="91" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-35" y1="126" x2="91" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-28" y1="0" x2="98" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-28" y1="126" x2="98" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-21" y1="0" x2="105" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-21" y1="126" x2="105" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-14" y1="0" x2="112" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-14" y1="126" x2="112" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-7" y1="0" x2="119" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="-7" y1="126" x2="119" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="0" y1="0" x2="126" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="0" y1="126" x2="126" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="7" y1="0" x2="133" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="7" y1="126" x2="133" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="14" y1="0" x2="140" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="14" y1="126" x2="140" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="21" y1="0" x2="147" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="21" y1="126" x2="147" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="28" y1="0" x2="154" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="28" y1="126" x2="154" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="35" y1="0" x2="161" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="35" y1="126" x2="161" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="42" y1="0" x2="168" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="42" y1="126" x2="168" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="49" y1="0" x2="175" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="49" y1="126" x2="175" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="56" y1="0" x2="182" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="56" y1="126" x2="182" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="63" y1="0" x2="189" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="63" y1="126" x2="189" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="70" y1="0" x2="196" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="70" y1="126" x2="196" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="77" y1="0" x2="203" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="77" y1="126" x2="203" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="84" y1="0" x2="210" y2="126" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><line x1="84" y1="126" x2="210" y2="0" stroke="#d4af37" stroke-width="0.4" opacity="0.16"/><ellipse cx="45" cy="63" rx="30" ry="11" fill="none" stroke="#d4af37" stroke-width="0.5" opacity="0.5" transform="rotate(0 45 63)"/><ellipse cx="45" cy="63" rx="30" ry="11" fill="none" stroke="#d4af37" stroke-width="0.5" opacity="0.5" transform="rotate(18 45 63)"/><ellipse cx="45" cy="63" rx="30" ry="11" fill="none" stroke="#d4af37" stroke-width="0.5" opacity="0.5" transform="rotate(36 45 63)"/><ellipse cx="45" cy="63" rx="30" ry="11" fill="none" stroke="#d4af37" stroke-width="0.5" opacity="0.5" transform="rotate(54 45 63)"/><ellipse cx="45" cy="63" rx="30" ry="11" fill="none" stroke="#d4af37" stroke-width="0.5" opacity="0.5" transform="rotate(72 45 63)"/><ellipse cx="45" cy="63" rx="30" ry="11" fill="none" stroke="#d4af37" stroke-width="0.5" opacity="0.5" transform="rotate(90 45 63)"/><ellipse cx="45" cy="63" rx="30" ry="11" fill="none" stroke="#d4af37" stroke-width="0.5" opacity="0.5" transform="rotate(108 45 63)"/><ellipse cx="45" cy="63" rx="30" ry="11" fill="none" stroke="#d4af37" stroke-width="0.5" opacity="0.5" transform="rotate(126 45 63)"/><ellipse cx="45" cy="63" rx="30" ry="11" fill="none" stroke="#d4af37" stroke-width="0.5" opacity="0.5" transform="rotate(144 45 63)"/><ellipse cx="45" cy="63" rx="30" ry="11" fill="none" stroke="#d4af37" stroke-width="0.5" opacity="0.5" transform="rotate(162 45 63)"/></g>
+  </g>
+  <rect x="4.5" y="4.5" width="81" height="117" rx="8" fill="none" stroke="#d4af37" stroke-width="1.4"/>
+  <rect x="8" y="8" width="74" height="110" rx="6" fill="none" stroke="#d4af37" stroke-width="0.7" opacity="0.7"/>
+  <g class="emblem">
+    <circle cx="45" cy="63" r="15" fill="#0b3d2e" stroke="#d4af37" stroke-width="1"/>
+    <path d="M45 52 L54 63 L45 74 L36 63 Z" fill="none" stroke="#d4af37" stroke-width="1"/>
+    <text x="45" y="63.5" text-anchor="middle" dominant-baseline="central" font-family="Georgia,'Times New Roman',serif" font-weight="700" font-size="11" fill="#d4af37">A</text>
+  </g>
+  <rect x="0.6" y="0.6" width="88.8" height="124.8" rx="12" fill="url(#cb_10-noise)" opacity="0.05"/>
+</svg></div></div><div class="abs " style="left:855px;top:279.99999999999994px"><div class="seat-plate folded"><div class="seat-name">Shark</div><div class="seat-stack">5,100</div></div></div><div class="abs " style="left:790.2px;top:279.99999999999994px"><div class="dealer" title="dealer">D</div></div><div class="hud-mount"><div class="hud-panel" role="status" aria-label="hand insights">
+    <div class="hud-title">Insights</div>
+    <div class="hud-row"><span class="hud-label">Pot odds</span><span class="hud-value ">10%</span></div>
+    <div class="hud-row"><span class="hud-label">Win chance</span><span class="hud-value hud-equity">58%</span></div>
+    <div class="hud-row"><span class="hud-label">Your hand</span><span class="hud-value hud-hint">One Pair</span></div>
+  </div></div>
+  </div>
+</body></html>

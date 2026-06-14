@@ -1,0 +1,235 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cinematics — preview</title>
+<style>
+  body{ margin:0; min-height:100vh; display:flex; flex-direction:column; align-items:center; gap:14px; padding:30px 16px;
+        font-family:Georgia,'Times New Roman',serif; color:#f6f1e7; background:radial-gradient(140% 120% at 50% 0%, #123 0%, #050a08 70%); }
+  h1{ color:#d4af37; margin:0; font-size:23px; letter-spacing:.06em; text-shadow:0 0 18px rgba(212,175,55,.5); }
+  .controls{ display:flex; flex-wrap:wrap; gap:8px; justify-content:center; max-width:760px; }
+  button{ font:inherit; font-size:13px; color:#f6f1e7; background:rgba(212,175,55,.14); border:1px solid rgba(212,175,55,.5); padding:7px 13px; border-radius:999px; cursor:pointer; }
+  button:hover{ background:rgba(212,175,55,.26); }
+  label{ font-size:13px; opacity:.85; display:flex; gap:6px; align-items:center; }
+  .stagewrap{ position:relative; width:720px; height:430px; border-radius:50%/46%; overflow:hidden;
+              background:radial-gradient(60% 60% at 50% 44%, #14543f, #0b3d2e 78%, #07271d); box-shadow: inset 0 0 0 16px #3a2620, 0 24px 60px #000a; }
+  #cv{ position:absolute; inset:0; width:100%; height:100%; }
+  .overlay{ position:absolute; inset:0; display:grid; place-items:center; pointer-events:none; }
+  #ring{ transform:rotate(-90deg); transform-origin:center; }
+  #counter{ position:absolute; top:18px; left:50%; transform:translateX(-50%); font-size:26px; color:#d4af37; text-shadow:0 0 12px rgba(212,175,55,.6); }
+  #handname{ position:absolute; bottom:24px; left:0; right:0; text-align:center; font-size:34px; letter-spacing:.08em; color:#f1d98a; text-shadow:0 0 16px rgba(212,175,55,.6); }
+  .ltr{ display:inline-block; opacity:0; transform:translateY(14px) scale(.8); transition:opacity .25s, transform .25s cubic-bezier(.34,1.56,.64,1); }
+  .ltr.in{ opacity:1; transform:none; }
+  @media (prefers-reduced-motion: reduce){ .ltr{ transition:none; } }
+</style></head>
+<body>
+  <h1>Cinematic catalogue</h1>
+  <div class="controls">
+    <button id="win">Win burst</button>
+    <button id="allin">All-in shockwave</button>
+    <button id="quads">Quads (slow-mo + shake + vignette)</button>
+    <button id="royal">Royal flush sweep</button>
+    <button id="timer">Turn timer</button>
+    <button id="count">Pot counter</button>
+    <button id="name">Hand name</button>
+    <button id="card">♪ card</button>
+    <button id="chip">♪ chip</button>
+    <label><input type="checkbox" id="mute"> Mute</label>
+  </div>
+  <div class="stagewrap">
+    <canvas id="cv" width="720" height="430"></canvas>
+    <div id="counter">0</div>
+    <div class="overlay"><svg width="130" height="130" viewBox="0 0 130 130"><circle cx="65" cy="65" r="52" fill="none" stroke="#ffffff22" stroke-width="7"/><circle id="ring" cx="65" cy="65" r="52" fill="none" stroke="#39c2d7" stroke-width="7" stroke-linecap="round"/></svg></div>
+    <div id="handname"></div>
+  </div>
+  <script>
+// effects.js — deterministic logic behind the cinematic catalogue (spec 3.4).
+// Pure (no DOM/Canvas): particle physics, shockwave rings, the slow-mo/shake/
+// vignette config by hand strength, hand-name letter stagger, the pot rolling
+// counter, the turn-timer ring colour/arc, and event→effect-cue mapping. The
+// demo/Phase-6 renderer draws these on a Canvas/overlay.
+
+// ---- particles (WIN gold burst, quads+ full-screen, ambient dust) ----
+function spawnBurst(cx, cy, { count = 90, speed = [80, 260], angle = [0, 360], life = [0.6, 1.2], size = [2, 6], rng = Math.random } = {}) {
+  const ps = [];
+  for (let i = 0; i < count; i++) {
+    const a = (angle[0] + rng() * (angle[1] - angle[0])) * Math.PI / 180;
+    const sp = speed[0] + rng() * (speed[1] - speed[0]);
+    ps.push({ x: cx, y: cy, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, age: 0, life: life[0] + rng() * (life[1] - life[0]), size: size[0] + rng() * (size[1] - size[0]), opacity: 1 });
+  }
+  return ps;
+}
+function stepParticles(ps, dt, { gravity = 420, drag = 0 } = {}) {
+  const alive = [];
+  for (const p of ps) {
+    p.age += dt;
+    if (p.age >= p.life) continue;
+    p.vy += gravity * dt;
+    if (drag) { p.vx *= 1 - drag * dt; p.vy *= 1 - drag * dt; }
+    p.x += p.vx * dt; p.y += p.vy * dt;
+    p.opacity = 1 - p.age / p.life;
+    alive.push(p);
+  }
+  return alive;
+}
+
+// ---- shockwave ring (ALL-IN) ----
+function shockwave(t, { duration = 600, maxR = 220 } = {}) {
+  const p = Math.min(t / duration, 1);
+  return { radius: maxR * p, opacity: 1 - p, done: p >= 1 };
+}
+
+// ---- big-hand cinematic config (spec: 포카드+ slow-mo/vignette/shake; royal special) ----
+// category is the engine hand rank 0..8 (8 = straight flush); quads+ = 7+.
+function cinematicForCategory(category, { royal = false } = {}) {
+  if (royal) return { slowmo: 0.5, slowmoMs: 600, shake: 4, vignette: 0.9, fullscreen: true, royal: true, particles: 140 };
+  if (category >= 7) return { slowmo: 0.5, slowmoMs: 600, shake: 3, vignette: 0.7, fullscreen: true, royal: false, particles: 120 };
+  return { slowmo: 1, slowmoMs: 0, shake: 0, vignette: 0, fullscreen: false, royal: false, particles: 0 };
+}
+
+// ---- hand-name typography (letter-by-letter stagger) ----
+function letterStagger(text, perLetterMs = 45) {
+  return [...(text || '')].map((ch, i) => ({ ch, delay: i * perLetterMs }));
+}
+
+// ---- pot rolling counter ----
+function rollCounter(from, to, p, easing = t => t) {
+  const e = easing(Math.min(Math.max(p, 0), 1));
+  return Math.round(from + (to - from) * e);
+}
+
+// ---- turn-timer ring: colour cyan→amber→red, and dash for the gauge ----
+const CYAN = [57, 194, 215], AMBER = [230, 180, 40], RED = [224, 69, 79];
+const mix = (a, b, t) => a.map((v, i) => Math.round(v + (b[i] - v) * t));
+function timerColor(frac) {
+  frac = Math.min(Math.max(frac, 0), 1);
+  const rgb = frac >= 0.5 ? mix(AMBER, CYAN, (frac - 0.5) / 0.5) : mix(RED, AMBER, frac / 0.5);
+  return `rgb(${rgb.join(', ')})`;
+}
+function timerArc(frac, circumference) {
+  frac = Math.min(Math.max(frac, 0), 1);
+  return { dasharray: circumference, dashoffset: circumference * (1 - frac) };
+}
+
+// ---- event → effect cues (the Phase-6 adapter renders each cue) ----
+function effectsForEvent(event) {
+  switch (event.type) {
+    case 'WIN':
+      return [{ effect: 'potBurst', at: event.at, particles: event.particles || 90 }, { effect: 'winnerGlow', target: event.seat }, { effect: 'potCounter', from: event.from || 0, to: event.to || 0 }];
+    case 'SHOWDOWN': {
+      const cine = cinematicForCategory(event.category ?? 0, { royal: !!event.royal });
+      const cues = [{ effect: 'cardGlow', cards: event.winningCards || [] }, { effect: 'handName', text: event.handName || '', letters: letterStagger(event.handName || '') }];
+      if (cine.fullscreen) cues.push({ effect: 'cinematic', config: cine });
+      return cues;
+    }
+    case 'ALL_IN':
+      return [{ effect: 'shockwave', at: event.at, rings: 2 }, { effect: 'banner', text: 'ALL IN' }, { effect: 'seatRim', target: event.seat, color: 'danger' }];
+    default:
+      return [];
+  }
+}
+
+// sound.js — synthesised sounds (spec 3.5: Web Audio, toggle). soundSpec is a
+// pure descriptor (testable); SoundBoard lazily builds an AudioContext and plays
+// specs, honouring a mute toggle. No external audio assets.
+function soundSpec(name) {
+  switch (name) {
+    case 'cardSlide': return { kind: 'noise', duration: 0.12, filter: { type: 'highpass', freq: 1200 }, gain: 0.18 };
+    case 'deal': return { kind: 'noise', duration: 0.08, filter: { type: 'bandpass', freq: 2000 }, gain: 0.12 };
+    case 'chip': return { kind: 'clicks', count: 3, spread: 0.03, freq: [1800, 2600], dur: 0.04, gain: 0.15 };
+    case 'win': return { kind: 'tones', notes: [523, 659, 784, 1047], noteMs: 120, gain: 0.2 };
+    default: return null;
+  }
+}
+
+function renderSound(ctx, spec) {
+  const now = ctx.currentTime ?? 0;
+  const out = ctx.createGain?.();
+  out?.connect?.(ctx.destination);
+  if (out?.gain?.setValueAtTime) out.gain.setValueAtTime(spec.gain ?? 0.15, now);
+
+  if (spec.kind === 'noise') {
+    const sr = ctx.sampleRate || 44100, n = Math.floor(sr * spec.duration);
+    const buf = ctx.createBuffer?.(1, Math.max(1, n), sr);
+    const data = buf?.getChannelData?.(0);
+    if (data) for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / data.length);
+    const src = ctx.createBufferSource?.(); if (src) src.buffer = buf;
+    if (spec.filter && ctx.createBiquadFilter) { const f = ctx.createBiquadFilter(); f.type = spec.filter.type; f.frequency?.setValueAtTime?.(spec.filter.freq, now); src?.connect?.(f); f.connect?.(out); }
+    else src?.connect?.(out);
+    src?.start?.(now); src?.stop?.(now + spec.duration);
+  } else if (spec.kind === 'clicks') {
+    for (let i = 0; i < spec.count; i++) {
+      const t = now + i * spec.spread, o = ctx.createOscillator?.();
+      o?.frequency?.setValueAtTime?.(spec.freq[0] + Math.random() * (spec.freq[1] - spec.freq[0]), t);
+      o?.connect?.(out); o?.start?.(t); o?.stop?.(t + spec.dur);
+    }
+  } else if (spec.kind === 'tones') {
+    spec.notes.forEach((f, i) => {
+      const t = now + i * spec.noteMs / 1000, o = ctx.createOscillator?.();
+      o?.frequency?.setValueAtTime?.(f, t); o?.connect?.(out); o?.start?.(t); o?.stop?.(t + spec.noteMs / 1000);
+    });
+  }
+}
+
+function defaultCtxFactory() {
+  const C = typeof AudioContext !== 'undefined' ? AudioContext : (typeof webkitAudioContext !== 'undefined' ? webkitAudioContext : null);
+  return C ? () => new C() : null;
+}
+class SoundBoard {
+  constructor({ ctxFactory, muted = false } = {}) { this.muted = !!muted; this._factory = ctxFactory; this.ctx = null; }
+  setMuted(m) { this.muted = !!m; }
+  _ensure() {
+    if (this.muted) return null;
+    if (!this.ctx) {
+      const make = this._factory || defaultCtxFactory();   // a factory returning an AudioContext
+      this.ctx = make ? make() : null;
+    }
+    return this.ctx;
+  }
+  play(name) {
+    if (this.muted) return false;
+    const spec = soundSpec(name), ctx = this._ensure();
+    if (!ctx || !spec) return false;
+    try { renderSound(ctx, spec); } catch { return false; }
+    return true;
+  }
+}
+
+
+const cv = document.getElementById('cv'), g = cv.getContext('2d'), W = cv.width, H = cv.height;
+const board = new SoundBoard({ muted: document.getElementById('mute').checked });
+let parts = [], rings = [], sweep = null, vignette = 0, last = 0;
+
+function loop(ts) {
+  const dt = Math.min((ts - last) / 1000 || 0, 0.05); last = ts;
+  g.clearRect(0, 0, W, H);
+  parts = stepParticles(parts, dt, { gravity: 360 });
+  for (const p of parts) { g.globalAlpha = Math.max(0, p.opacity); g.fillStyle = '#f1d98a'; g.beginPath(); g.arc(p.x, p.y, p.size, 0, 7); g.fill(); }
+  g.globalAlpha = 1;
+  rings = rings.filter(r => { const s = shockwave(ts - r.t0, { duration: 700, maxR: 320 }); if (s.done) return false; g.strokeStyle = 'rgba(57,194,215,' + s.opacity.toFixed(3) + ')'; g.lineWidth = 4; g.beginPath(); g.arc(W / 2, H / 2, s.radius, 0, 7); g.stroke(); return true; });
+  if (sweep) { const p = Math.min((ts - sweep.t0) / 900, 1), x = -200 + (W + 400) * p; const gr = g.createLinearGradient(x - 130, 0, x + 130, 0); gr.addColorStop(0, 'rgba(212,175,55,0)'); gr.addColorStop(.5, 'rgba(245,222,140,.55)'); gr.addColorStop(1, 'rgba(212,175,55,0)'); g.fillStyle = gr; g.fillRect(0, 0, W, H); if (p >= 1) sweep = null; }
+  if (vignette > 0) { const rg = g.createRadialGradient(W / 2, H / 2, H * .2, W / 2, H / 2, H * .72); rg.addColorStop(0, 'rgba(0,0,0,0)'); rg.addColorStop(1, 'rgba(0,0,0,' + vignette + ')'); g.fillStyle = rg; g.fillRect(0, 0, W, H); }
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+function shake(px, ms) { const t0 = performance.now(); (function s() { const e = performance.now() - t0; if (e > ms) { cv.style.transform = ''; return; } cv.style.transform = 'translate(' + ((Math.random() * 2 - 1) * px).toFixed(1) + 'px,' + ((Math.random() * 2 - 1) * px).toFixed(1) + 'px)'; requestAnimationFrame(s); })(); }
+
+document.getElementById('win').onclick = () => { parts = parts.concat(spawnBurst(W / 2, H / 2, { count: 90, speed: [120, 340], life: [.7, 1.3] })); board.play('win'); };
+document.getElementById('allin').onclick = () => { rings.push({ t0: performance.now() }); setTimeout(() => rings.push({ t0: performance.now() }), 150); board.play('chip'); };
+document.getElementById('quads').onclick = () => { const c = cinematicForCategory(7); vignette = c.vignette; parts = parts.concat(spawnBurst(W / 2, H / 2, { count: c.particles })); shake(c.shake, 600); board.play('win'); setTimeout(() => vignette = 0, 900); };
+document.getElementById('royal').onclick = () => { const c = cinematicForCategory(8, { royal: true }); vignette = c.vignette; sweep = { t0: performance.now() }; parts = parts.concat(spawnBurst(W / 2, H / 2, { count: c.particles, size: [3, 8] })); shake(c.shake, 700); board.play('win'); setTimeout(() => vignette = 0, 1200); };
+
+const ring = document.getElementById('ring'), C = 2 * Math.PI * 52; ring.setAttribute('stroke-dasharray', C);
+document.getElementById('timer').onclick = () => { const T = 6000, t0 = performance.now(); (function tk() { const f = Math.max(0, 1 - (performance.now() - t0) / T); ring.setAttribute('stroke', timerColor(f)); ring.setAttribute('stroke-dashoffset', timerArc(f, C).dashoffset); if (f > 0) requestAnimationFrame(tk); })(); };
+
+const counter = document.getElementById('counter');
+document.getElementById('count').onclick = () => { const T = 1200, t0 = performance.now(); (function tk() { const p = Math.min((performance.now() - t0) / T, 1); counter.textContent = rollCounter(0, 12345, p, x => 1 - Math.pow(1 - x, 3)).toLocaleString(); if (p < 1) requestAnimationFrame(tk); })(); };
+
+const nameEl = document.getElementById('handname');
+document.getElementById('name').onclick = () => { nameEl.innerHTML = ''; for (const { ch, delay } of letterStagger('ROYAL FLUSH', 70)) { const s = document.createElement('span'); s.textContent = ch === ' ' ? '\u00a0' : ch; s.className = 'ltr'; nameEl.appendChild(s); setTimeout(() => s.classList.add('in'), delay); } };
+
+document.getElementById('mute').onchange = e => board.setMuted(e.target.checked);
+document.getElementById('card').onclick = () => board.play('cardSlide');
+document.getElementById('chip').onclick = () => board.play('chip');
+
+  </script>
+</body></html>

@@ -1,0 +1,59 @@
+/* table.css — scene composition + HUD (spec 3.5). Positioning for the seats,
+   chip piles, dealer button, and the glassmorphism insights panel. */
+
+.table-scene { position: relative; font-family: Georgia, 'Times New Roman', serif; color: var(--paper, #f6f1e7); }
+.table-bg { position: absolute; inset: 0; }
+.table-bg svg { display: block; }
+
+.abs { position: absolute; transform: translate(-50%, -50%); }
+
+/* community + pot */
+.board { display: flex; gap: 6px; }
+.board .playing-card { filter: drop-shadow(0 3px 6px rgba(0, 0, 0, .5)); }
+.pot { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.pot-label { font-size: 13px; letter-spacing: .08em; color: var(--gold, #d4af37);
+  background: rgba(0, 0, 0, .35); padding: 2px 10px; border-radius: 999px; }
+
+/* chip piles */
+.pile { display: flex; align-items: flex-end; gap: 6px; }
+.pile-col { display: flex; flex-direction: column; align-items: center; }
+.pile-stack { position: relative; }
+.pile-stack .ch { position: absolute; left: 0; line-height: 0; }
+.pile-x, .commit-x { font-size: 10px; opacity: .8; margin-top: 3px; }
+
+/* hands */
+.hand { display: flex; }
+.hand .playing-card + .playing-card { margin-left: -28px; }
+.muck { opacity: .35; filter: grayscale(.4); }
+
+/* seat plate */
+.seat-plate { min-width: 88px; text-align: center; padding: 6px 12px; border-radius: 12px;
+  background: linear-gradient(180deg, rgba(20, 30, 26, .92), rgba(8, 16, 12, .92));
+  border: 1px solid rgba(212, 175, 55, .35); box-shadow: 0 4px 14px rgba(0, 0, 0, .45); }
+.seat-name { font-size: 13px; font-weight: 700; letter-spacing: .03em; }
+.seat-stack { font-size: 12px; color: var(--gold, #d4af37); }
+.seat-plate.hero { border-color: var(--gold, #d4af37); box-shadow: 0 0 0 1px var(--gold, #d4af37), 0 6px 18px rgba(0, 0, 0, .5); }
+.seat-plate.active { box-shadow: 0 0 0 2px var(--info, #39c2d7), 0 0 18px rgba(57, 194, 215, .5); }
+.seat-plate.allin { border-color: var(--danger, #e0454f); box-shadow: 0 0 0 2px var(--danger, #e0454f), 0 0 18px rgba(224, 69, 79, .45); }
+.seat-plate.folded { opacity: .5; }
+.commit { display: flex; flex-direction: column; align-items: center; }
+
+/* dealer button */
+.dealer { width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center;
+  font-size: 12px; font-weight: 700; color: #1b2030;
+  background: radial-gradient(circle at 38% 32%, #fff, #d9d2c4);
+  box-shadow: 0 2px 5px rgba(0, 0, 0, .5), inset 0 0 0 2px rgba(0, 0, 0, .12); }
+
+/* glassmorphism HUD */
+.hud-mount { position: absolute; top: 16px; right: 16px; }
+.hud-panel { min-width: 168px; padding: 12px 14px; border-radius: 14px;
+  background: rgba(18, 28, 24, .42); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+  border: 1px solid rgba(212, 175, 55, .35); box-shadow: 0 8px 28px rgba(0, 0, 0, .45); }
+.hud-title { font-size: 10px; letter-spacing: .24em; text-transform: uppercase; opacity: .6; margin-bottom: 8px; }
+.hud-row { display: flex; justify-content: space-between; align-items: baseline; gap: 14px; padding: 3px 0; }
+.hud-label { font-size: 12px; opacity: .75; }
+.hud-value { font-size: 14px; font-weight: 700; }
+.hud-equity { color: var(--info, #39c2d7); }
+.hud-hint { color: var(--gold, #d4af37); font-size: 12px; }
+
+@media (prefers-reduced-motion: reduce) { .table-scene * { transition: none !important; } }

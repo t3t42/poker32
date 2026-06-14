@@ -1,0 +1,12 @@
+{
+  "name": "holdem-engine",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "No-Limit Texas Hold'em — pure game-engine value layer (Phase 1a).",
+  "scripts": {
+    "test": "node tests/engine.value-layer.test.js && node tests/engine.orchestration.test.js && node tests/ai.core.test.js && node tests/ai.psychology.test.js && node tests/ai.decide.test.js && node tests/ai.gemini.test.js && node tests/ai.llm-decider.test.js && node tests/render.chips.test.js && node tests/render.cards.test.js && node tests/render.table.test.js && node tests/anim.core.test.js && node tests/anim.effects.test.js && node tests/app.controller.test.js && node tests/app.settings.test.js && node tests/acceptance.test.js",
+    "preview": "node scripts/preview-chips.mjs && node scripts/preview-cards.mjs && node scripts/preview-table.mjs && node scripts/preview-anim.mjs && node scripts/preview-effects.mjs",
+    "serve": "python3 -m http.server 8000"
+  }
+}
